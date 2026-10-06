@@ -1,0 +1,20 @@
+# Environment / secrets
+.env
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Build output
+dist/
+
+# Data
+data/
+*.db
+*.zip
