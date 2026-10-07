@@ -121,18 +121,30 @@ A new account adds one row to `users`:
 | `first_name`, `last_name` | As typed (trimmed). |
 | `name` | `first_name + " " + last_name` (the table requires it). |
 | `email` | Trimmed and lower-cased; unique. |
-| `password_hash` | `pbkdf2_sha256$<salt>$<digest>` (see below). The plain password is never stored. |
+| `password_hash` | `pbkdf2_sha256$600000$<salt>$<digest>` (see below). The plain password is never stored. |
 | `created_at` | Set by the database. |
 
 ### How passwords are protected
 
-- **Same method as the existing data:** PBKDF2-HMAC-SHA256, 120,000 iterations, hex digest, stored as `pbkdf2_sha256$<salt>$<digest>`. The seed users and new users use one format, so both can log in.
+- **Algorithm:** PBKDF2-HMAC-SHA256 with a hex digest, the same algorithm as the existing data. There are two stored formats, and both are verified:
+
+| Format | Who has it | Iterations |
+|---|---|---|
+| `pbkdf2_sha256$<iterations>$<salt>$<digest>` | **New accounts** | Stored in the hash; currently **600,000** (OWASP's recommendation for PBKDF2-SHA256) |
+| `pbkdf2_sha256$<salt>$<digest>` | Existing rows (seed data, and accounts created before this change) | No count stored, so they are checked at **120,000** |
+
+- **Existing rows are never rewritten.** Old hashes keep working exactly as before. Only new sign-ups get the stronger format.
+- **Changing the cost later:** because the count is stored in each new hash, raising `ITERATIONS` in `backend/passwords.py` only affects future sign-ups, and every existing hash still verifies.
+- **Tampered counts:** a stored count must be a whole number from 1 to 5,000,000; anything else fails verification instead of hanging the server.
 - **Library:** Python's standard `hashlib.pbkdf2_hmac` (OpenSSL-backed) for hashing and `secrets` for randomness.
 - **Unique salt per password:** 8 random bytes (16 hex characters) from `secrets.token_hex`, so two people with the same password get different hashes.
 - **Constant-time comparison** with `hmac.compare_digest`.
 - **Never stored or logged in plain text.** The server log only shows the method, path, and status code. FastAPI's default validation error (which echoes the request body) is replaced with a generic message so a password can't bounce back.
-- **Same work for wrong email and wrong password:** if the email doesn't exist, the server still checks the password against a dummy hash, so response time doesn't reveal which emails have accounts.
-- **Known trade-off:** 120,000 iterations is below today's OWASP advice (600,000 for PBKDF2-SHA256). We kept it so seed accounts keep working. A future upgrade could re-hash with more iterations on the next successful login (this needs the iteration count added to the stored format).
+- **Same work for wrong email and wrong password:** if the email doesn't exist, the server still checks the password against a dummy hash at 600,000 iterations (the same cost as a new account), so response time doesn't reveal which emails have accounts.
+- **Remaining trade-off:**
+  - Legacy hashes (120,000 iterations) are cheaper to crack if the database ever leaks.
+  - They are also verified faster, so a wrong password on a legacy account answers a little quicker than one on an unknown email.
+  - Upgrading them means re-hashing each one at 600,000 when its owner next logs in successfully. That changes existing rows, so it was deliberately left out here.
 
 ### How sessions work
 

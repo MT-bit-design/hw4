@@ -124,7 +124,13 @@ Docs and git:
 * Commit it as "Problem 4 - Create account and login." Don't commit `.env`, `data/`, or any `.db` file.
 ```
 
-**Follow-up prompt:** None needed.
+**Follow-up prompt:**
+
+```text
+Strengthen password hashing for new accounts only. Keep verifying existing hashes exactly as now, and don't touch any existing row. New accounts use PBKDF2-HMAC-SHA256 with 600,000 iterations, and the iteration count is stored inside the hash string. Hashes without a count are checked at 120,000. Test that the seed user still logs in, that a new account can be created and log in, and that a wrong password is rejected. Print only a marker or a length, never a hash or salt. Update the Authentication section in output/harness.md. Add a follow-up under Problem 4 in AI_prompts.md with this prompt and one sentence saying the first version used 120,000 iterations for new accounts, below the current recommendation. Make a new commit named "Problem 4 follow-up - stronger password hashing." Don't rewrite history.
+```
+
+What was missing: the first version used 120,000 iterations for new accounts, below the current recommendation of 600,000 for PBKDF2-HMAC-SHA256.
 
 ---
 
