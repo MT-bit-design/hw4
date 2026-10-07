@@ -22,3 +22,6 @@ dist/
 data/
 *.db
 *.zip
+
+# Audit trail lock file (created by backend/audit.py)
+output/audit_trail.json.lock

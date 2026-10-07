@@ -118,6 +118,28 @@ class ToolError(BaseModel):
     message: str
 
 
+# ---------- audit trail ----------
+
+StopReason = Literal["done", "limit", "error", "blocked"]
+AUDIT_TEXT_CHARS = 100  # every free-text field in an audit entry is cut to this
+
+
+class AuditEntry(BaseModel):
+    """One line in output/audit_trail.json (append-only, one JSON object per line).
+
+    A chat run writes one entry per tool call plus one closing "reply" entry, all sharing `run_id`
+    and the run's final `stop_reason`. Text is redacted (emails, hashes, keys) and cut to ~100 chars.
+    """
+
+    time: str  # UTC, ISO 8601, when this step finished
+    run_id: str  # short random id linking the entries of one chat run
+    user: int | Literal["guest"]  # the session user's id, never a name or email
+    tool: str  # tool name, or "reply" / "price_check" / "rate_limit" for non-tool steps
+    args: str  # short, redacted summary of the inputs
+    result: str  # short, redacted summary of the output
+    stop_reason: StopReason  # how the whole run ended: done | limit | error | blocked
+
+
 # ---------- agent ----------
 
 class ShopReply(BaseModel):
@@ -126,7 +148,7 @@ class ShopReply(BaseModel):
     reply: str = Field(description="What to say to the shopper. Short, warm, and accurate.")
     product_ids: list[str] = Field(
         default_factory=list,
-        description="IDs of up to 4 recommended products, taken from search_products results.",
+        description="IDs of up to 4 products this reply is about, taken from tool results in this conversation.",
     )
     show_on_page: bool = Field(
         default=False,
@@ -144,7 +166,7 @@ class ShopReply(BaseModel):
 
 @dataclass
 class SearchRecord:
-    """One search_products call: what was asked and the cards it returned (up to MAX_PAGE_CARDS)."""
+    """One search_products or search_by_size call: what was asked and the cards it returned (up to MAX_PAGE_CARDS)."""
 
     query: str
     total: int
@@ -170,3 +192,5 @@ class ChatDeps:
     customer: Customer | None = None  # None for guests
     page_path: str | None = None  # validated path the shopper is on, e.g. "/products"
     viewed_product: ProductDetails | None = None  # the real product, if they're on a product page
+    # Tool calls made during this run, as (time, tool, args, result); turned into AuditEntry rows at the end.
+    audit_steps: list[tuple[str, str, str, str]] = field(default_factory=list)

@@ -19,6 +19,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
+from audit import audited
 from models import ChatDeps, ChatTurn, ShopReply
 from tools import get_my_account, get_product_details, get_stock, search_by_size, search_products
 
@@ -90,7 +91,8 @@ def get_agent() -> Agent[ChatDeps, ShopReply]:
         deps_type=ChatDeps,
         output_type=ShopReply,
         instructions=[load_prompt(), context_instructions],
-        tools=[search_products, search_by_size, get_product_details, get_stock, get_my_account],
+        # Every tool call is recorded for the audit trail (audit.py); signatures and docstrings are unchanged.
+        tools=[audited(t) for t in (search_products, search_by_size, get_product_details, get_stock, get_my_account)],
         model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
         retries=1,
     )

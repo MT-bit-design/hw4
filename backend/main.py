@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded  # noqa: E402
 from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
 
+import audit  # noqa: E402
 import history  # noqa: E402
 import price_check  # noqa: E402
 from agent import ChatNotConfigured, rerun_with_correction, run_chat  # noqa: E402
@@ -157,16 +158,21 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     if len(body.history) > MAX_HISTORY_TURNS * 4:
         raise HTTPException(status_code=400, detail="Conversation history is too long.")
 
+    # Who's chatting comes only from the signed session cookie, never from the request body.
+    user = session_user(request)
+    uid = user["id"] if user else None
+    run_id = audit.new_run_id()
+
     wait = chat_limiter.check(client_ip(request))
     if wait:
+        audit.record_run(run_id, uid, None, "limit", message, f"rate limited (retry after {wait}s)",
+                         [("rate_limit", "replies per minute", f"429, retry after {wait}s")])
         raise HTTPException(
             status_code=429,
             detail="You're chatting fast! Give me a moment and try again.",
             headers={"Retry-After": str(wait)},
         )
 
-    # Who's chatting comes only from the signed session cookie, never from the request body.
-    user = session_user(request)
     deps = ChatDeps(customer=Customer(user["id"], user["first_name"], user["email"]) if user else None)
     deps.page_path, deps.viewed_product = page_context(body.page)
 
@@ -181,22 +187,28 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             if turn.content.strip()
         ]
 
+    price_note: tuple[str, str, str] | None = None
     try:
         output, deps, run_messages = await run_chat(message, turns, deps)
-        output = await enforce_price_check(output, deps, message, run_messages)
+        output, price_note = await enforce_price_check(output, deps, message, run_messages)
     except ChatNotConfigured:
+        audit.record_run(run_id, uid, deps, "error", message, "chat not configured (503)")
         raise HTTPException(status_code=503, detail="The shop assistant isn't set up yet. Please try again later.")
-    except UsageLimitExceeded:
+    except UsageLimitExceeded as exc:
+        audit.record_run(run_id, uid, deps, "limit", message, f"usage limit hit: {exc}")
         raise HTTPException(status_code=502, detail="That one was too tricky for me. Could you ask a simpler way?")
     except ModelHTTPError as exc:
         # The provider's safety filter (e.g. Azure content filter / jailbreak shield) blocked the message.
         if exc.status_code == 400 and "content_filter" in str(exc.body):
             log.info("chat blocked by provider content filter")
+            audit.record_run(run_id, uid, deps, "blocked", message, "provider content filter; sent safe refusal")
             return finish_chat(user, message, ChatResponse(reply=BLOCKED_REPLY))
         log.warning("chat failed: ModelHTTPError %s", exc.status_code)
+        audit.record_run(run_id, uid, deps, "error", message, f"model HTTP error {exc.status_code}")
         raise HTTPException(status_code=502, detail="The shop assistant is having trouble right now. Please try again.")
     except Exception as exc:  # model/network errors: log the type only, never request contents or keys
         log.warning("chat failed: %s", type(exc).__name__)
+        audit.record_run(run_id, uid, deps, "error", message, f"error: {type(exc).__name__}")
         raise HTTPException(status_code=502, detail="The shop assistant is having trouble right now. Please try again.")
 
     # Cards only for real products the tool returned in this run (no invented items or prices).
@@ -208,15 +220,22 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         if len(cards) == MAX_PRODUCT_CARDS:
             break
     response = ChatResponse(reply=output.reply.strip(), products=cards, page_results=page_results_for(output, deps))
+    stop = "blocked" if price_note and price_note[2].startswith("fallback") else "done"
+    flags = f"off_topic={output.off_topic}, show_on_page={output.show_on_page}, cards={len(cards)}"
+    audit.record_run(run_id, uid, deps, stop, message, f"{flags}; reply: {response.reply}",
+                     [price_note] if price_note else [])
     return finish_chat(user, message, response)
 
 
-async def enforce_price_check(output: ShopReply, deps: ChatDeps, message: str, run_messages) -> ShopReply:
+async def enforce_price_check(
+    output: ShopReply, deps: ChatDeps, message: str, run_messages
+) -> tuple[ShopReply, tuple[str, str, str] | None]:
     """Every dollar amount in the reply must come from a tool result (see price_check.py).
-    If one doesn't: ask the agent once to rewrite; if it still doesn't, send the safe fallback."""
+    If one doesn't: ask the agent once to rewrite; if it still doesn't, send the safe fallback.
+    Returns the reply to send and, if the check fired, an audit step (tool, args, result)."""
     bad = price_check.unverified_amounts(output.reply, deps, message)
     if not bad:
-        return output
+        return output, None
     log.info("price check: %d unverified amount(s); asking the agent to rewrite", len(bad))
     try:
         fixed = await rerun_with_correction(price_check.correction_prompt(bad), run_messages, deps)
@@ -225,9 +244,12 @@ async def enforce_price_check(output: ShopReply, deps: ChatDeps, message: str, r
         fixed = None
     if fixed is not None and not price_check.unverified_amounts(fixed.reply, deps, message):
         log.info("price check: rewrite passed")
-        return fixed
+        return fixed, ("price_check", f"unverified: {', '.join(bad)}", "rewrite passed")
     log.info("price check: rewrite still unverified; sending fallback")
-    return output.model_copy(update={"reply": price_check.FALLBACK_REPLY})
+    return (
+        output.model_copy(update={"reply": price_check.FALLBACK_REPLY}),
+        ("price_check", f"unverified: {', '.join(bad)}", "fallback sent (rewrite still unverified)"),
+    )
 
 
 def finish_chat(user: dict | None, message: str, response: ChatResponse) -> ChatResponse:
