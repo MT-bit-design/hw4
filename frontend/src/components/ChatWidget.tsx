@@ -1,14 +1,27 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { sendChatMessage } from "../api";
+import { Link } from "react-router-dom";
+import {
+  ApiError,
+  CHAT_MAX_MESSAGE,
+  formatPrice,
+  imageSrc,
+  sendChatMessage,
+  type ChatProduct,
+  type ChatTurn,
+} from "../api";
 
 interface Message {
   role: "user" | "assistant";
   text: string;
+  products?: ChatProduct[];
+  /** Local-only messages (greeting, errors) are not sent back as history. */
+  local?: boolean;
 }
 
 const greeting: Message = {
   role: "assistant",
   text: "Hi! I'm the Campus Customs assistant. Looking for something blue?",
+  local: true,
 };
 
 export default function ChatWidget() {
@@ -26,14 +39,16 @@ export default function ChatWidget() {
     e.preventDefault();
     const text = input.trim();
     if (!text || sending) return;
+    const history: ChatTurn[] = messages.filter((m) => !m.local).map((m) => ({ role: m.role, content: m.text }));
     setInput("");
     setMessages((m) => [...m, { role: "user", text }]);
     setSending(true);
     try {
-      const reply = await sendChatMessage(text);
-      setMessages((m) => [...m, { role: "assistant", text: reply }]);
-    } catch {
-      setMessages((m) => [...m, { role: "assistant", text: "Sorry, something went wrong. Try again." }]);
+      const { reply, products } = await sendChatMessage(text, history);
+      setMessages((m) => [...m, { role: "assistant", text: reply, products }]);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Sorry, I couldn't reach the shop. Try again.";
+      setMessages((m) => [...m, { role: "assistant", text: msg, local: true }]);
     } finally {
       setSending(false);
     }
@@ -51,11 +66,24 @@ export default function ChatWidget() {
           </header>
           <div className="chat-messages">
             {messages.map((m, i) => (
-              <div key={i} className={`chat-bubble ${m.role}`}>
-                {m.text}
+              <div key={i} className={`chat-turn ${m.role}`}>
+                <div className={`chat-bubble ${m.role}`}>{m.text}</div>
+                {m.products && m.products.length > 0 && (
+                  <div className="chat-products">
+                    {m.products.map((p) => (
+                      <Link key={p.id} to={`/products/${p.id}`} className="chat-product">
+                        <img src={imageSrc(p.image_url)} alt="" loading="lazy" />
+                        <span className="chat-product-text">
+                          <span className="chat-product-name">{p.name}</span>
+                          <span className="chat-product-price">{formatPrice(p.price)}</span>
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
-            {sending && <div className="chat-bubble assistant typing">…</div>}
+            {sending && <div className="chat-bubble assistant typing">Looking that up…</div>}
             <div ref={endRef} />
           </div>
           <form className="chat-form" onSubmit={handleSubmit}>
@@ -64,6 +92,7 @@ export default function ChatWidget() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about sizes, styles, gifts…"
               aria-label="Your message"
+              maxLength={CHAT_MAX_MESSAGE}
               autoFocus
             />
             <button type="submit" className="btn btn-primary btn-sm" disabled={!input.trim() || sending}>

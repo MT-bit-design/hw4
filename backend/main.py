@@ -1,28 +1,48 @@
 """Campus Customs backend.
 
+Run from inside backend/:  uvicorn main:app --reload --port 8000
+
 - Products API: read-only; only the `catalogue` and `inventory` tables are queried.
 - Auth API (auth.py): create account / log in / log out; may only touch `users`.
-- `chat_messages` is never read or written.
+- Chat API: PydanticAI agent (agent.py) with one read-only catalogue tool (tools.py).
+- `chat_messages` is never read or written, and no user data is sent to the model.
 """
 
 import json
+import logging
 import os
 import re
 import sqlite3
+import threading
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from starlette.middleware.sessions import SessionMiddleware
-
-from .auth import ALLOWED_ORIGINS
-from .auth import router as auth_router
-from .db import ROOT, connect_readonly
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded  # noqa: E402
+from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
+
+from agent import ChatNotConfigured, run_chat  # noqa: E402
+from auth import ALLOWED_ORIGINS, client_ip, require_json_from_allowed_origin  # noqa: E402
+from auth import router as auth_router  # noqa: E402
+from db import ROOT, connect_readonly  # noqa: E402
+from models import (  # noqa: E402
+    MAX_HISTORY_TURN_CHARS,
+    MAX_HISTORY_TURNS,
+    MAX_MESSAGE_CHARS,
+    MAX_PRODUCT_CARDS,
+    ChatRequest,
+    ChatResponse,
+)
+
+log = logging.getLogger("campus_customs")
 
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 if len(SESSION_SECRET) < 32 or SESSION_SECRET.startswith("change-me"):
@@ -69,6 +89,95 @@ async def validation_error(_request: Request, _exc: RequestValidationError) -> J
 
 
 app.include_router(auth_router)
+
+
+# ---------- chat ----------
+
+class ReplyRateLimiter:
+    """Sliding-window cap on chat replies: per client IP, plus one global cap for the whole server."""
+
+    def __init__(self, per_ip_per_minute: int = 8, global_per_minute: int = 40):
+        self.per_ip = per_ip_per_minute
+        self.global_cap = global_per_minute
+        self.hits: dict[str, deque[float]] = defaultdict(deque)
+        self.lock = threading.Lock()
+
+    def check(self, ip: str) -> int:
+        """Record a request; return 0 if allowed, else seconds to wait."""
+        now = time.monotonic()
+        with self.lock:
+            waits = []
+            for key, cap in ((f"ip:{ip}", self.per_ip), ("global", self.global_cap)):
+                q = self.hits[key]
+                while q and now - q[0] > 60:
+                    q.popleft()
+                if len(q) >= cap:
+                    waits.append(60 - (now - q[0]))
+            if waits:
+                return int(max(waits)) + 1
+            self.hits[f"ip:{ip}"].append(now)
+            self.hits["global"].append(now)
+            return 0
+
+
+chat_limiter = ReplyRateLimiter()
+
+BLOCKED_REPLY = (
+    "I'm just here to help you shop Campus Customs, so I can't help with that one. "
+    "Want me to find you a hoodie, crewneck, or tee?"
+)
+
+
+@app.post("/api/chat", dependencies=[Depends(require_json_from_allowed_origin)])
+async def chat(body: ChatRequest, request: Request) -> ChatResponse:
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Type a message first.")
+    if len(message) > MAX_MESSAGE_CHARS:
+        raise HTTPException(status_code=400, detail=f"Please keep messages under {MAX_MESSAGE_CHARS} characters.")
+    if len(body.history) > MAX_HISTORY_TURNS * 4:
+        raise HTTPException(status_code=400, detail="Conversation history is too long.")
+    # Only the most recent turns are used; overly long turns are cut down.
+    history = [
+        turn.model_copy(update={"content": turn.content[:MAX_HISTORY_TURN_CHARS]})
+        for turn in body.history[-MAX_HISTORY_TURNS:]
+        if turn.content.strip()
+    ]
+
+    wait = chat_limiter.check(client_ip(request))
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail="You're chatting fast! Give me a moment and try again.",
+            headers={"Retry-After": str(wait)},
+        )
+
+    try:
+        output, deps = await run_chat(message, history)
+    except ChatNotConfigured:
+        raise HTTPException(status_code=503, detail="The shop assistant isn't set up yet. Please try again later.")
+    except UsageLimitExceeded:
+        raise HTTPException(status_code=502, detail="That one was too tricky for me. Could you ask a simpler way?")
+    except ModelHTTPError as exc:
+        # The provider's safety filter (e.g. Azure content filter / jailbreak shield) blocked the message.
+        if exc.status_code == 400 and "content_filter" in str(exc.body):
+            log.info("chat blocked by provider content filter")
+            return ChatResponse(reply=BLOCKED_REPLY)
+        log.warning("chat failed: ModelHTTPError %s", exc.status_code)
+        raise HTTPException(status_code=502, detail="The shop assistant is having trouble right now. Please try again.")
+    except Exception as exc:  # model/network errors: log the type only, never request contents or keys
+        log.warning("chat failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="The shop assistant is having trouble right now. Please try again.")
+
+    # Cards only for real products the tool returned in this run (no invented items or prices).
+    cards = []
+    for pid in output.product_ids:
+        card = deps.seen_products.get(pid)
+        if card and card not in cards:
+            cards.append(card)
+        if len(cards) == MAX_PRODUCT_CARDS:
+            break
+    return ChatResponse(reply=output.reply.strip(), products=cards)
 
 
 def image_url(image_file_path: str) -> str:

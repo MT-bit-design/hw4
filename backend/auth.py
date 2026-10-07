@@ -14,8 +14,8 @@ from collections import defaultdict, deque
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from .db import connect_users
-from .passwords import DUMMY_HASH, hash_password, verify_password
+from db import connect_users
+from passwords import DUMMY_HASH, hash_password, verify_password
 
 ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

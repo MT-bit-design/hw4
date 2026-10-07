@@ -2,3 +2,5 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 itsdangerous>=2.2
 python-dotenv>=1.0
+pydantic-ai-slim[openai]>=2.54
+portkey-ai>=2.3

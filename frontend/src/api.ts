@@ -87,11 +87,36 @@ export const imageSrc = (imageUrl: string) => `${API_BASE}${imageUrl}`;
 export const formatPrice = (price: number) =>
   price.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
-/**
- * Sends a chat message and returns the assistant's reply.
- * Stub for now: Problem 5 will replace the body with a call to the agent backend.
- */
-export async function sendChatMessage(message: string): Promise<string> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  return `Thanks for your message! Our shopping assistant is still in training, so I can't answer "${message}" just yet. Check back soon.`;
+export interface ChatProduct {
+  id: string;
+  name: string;
+  price: number;
+  image_url: string;
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatReply {
+  reply: string;
+  products: ChatProduct[];
+}
+
+/** Limits mirrored from the backend (backend/models.py); the server enforces them too. */
+export const CHAT_MAX_MESSAGE = 500;
+export const CHAT_MAX_HISTORY = 10;
+
+/** Sends a message plus recent history to the shop agent (POST /api/chat). */
+export async function sendChatMessage(message: string, history: ChatTurn[]): Promise<ChatReply> {
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history: history.slice(-CHAT_MAX_HISTORY) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.detail ?? "The assistant is unavailable right now.", res.status);
+  return data as ChatReply;
 }
