@@ -1,10 +1,12 @@
 """Agent tools. Read-only; they only query the `catalogue` and `inventory` tables.
 
 - search_products:     find products by words and/or budget
-- get_product_details: name, description, price for one product id
+- get_product_details: name, description, price, colors for one product id
 - get_stock:           quantity for one size, or all six sizes, for one product id
+- get_my_account:      the logged-in shopper's own first name and email (from deps, no database)
 """
 
+import json
 import logging
 import re
 import sqlite3
@@ -208,32 +210,66 @@ def search_products(
     }
 
 
-def get_product_details(ctx: RunContext[ChatDeps], product_id: str) -> ProductDetails | ToolError:
-    """Look up one product's name, garment type, full description, and exact price.
+def _details_row(product_id: str) -> sqlite3.Row | None:
+    with connect_readonly() as conn:
+        return conn.execute(
+            f"SELECT {CARD_COLUMNS}, colors FROM catalogue WHERE product_id = ?", (product_id.strip(),)
+        ).fetchone()
 
-    Args:
-        product_id: The product `id` from search_products (e.g. "baseball-left-chest-crewneck").
-    """
+
+def _details(row: sqlite3.Row) -> ProductDetails:
     try:
-        with connect_readonly() as conn:
-            row = conn.execute(
-                "SELECT product_id, name, garment_type, description, price, image_file_path "
-                "FROM catalogue WHERE product_id = ?",
-                (product_id.strip(),),
-            ).fetchone()
-    except sqlite3.Error:
-        log.warning("get_product_details failed", exc_info=True)
-        return LOOKUP_FAILED
-    if row is None:
-        return NOT_FOUND
-    _remember(ctx, row)
+        colors = [str(c) for c in json.loads(row["colors"])]
+    except (ValueError, TypeError):
+        colors = []
     return ProductDetails(
         id=row["product_id"],
         name=row["name"],
         garment_type=row["garment_type"],
         description=row["description"],
         price=f"${row['price']:.2f}",
+        colors=colors,
     )
+
+
+def lookup_product(product_id: str) -> tuple[ProductDetails, ProductCard] | None:
+    """Server-side lookup (no agent context): the real product for an id, or None."""
+    if not product_id or len(product_id) > 120:
+        return None
+    try:
+        row = _details_row(product_id)
+    except sqlite3.Error:
+        log.warning("lookup_product failed", exc_info=True)
+        return None
+    return (_details(row), card_from_row(row)) if row else None
+
+
+def get_product_details(ctx: RunContext[ChatDeps], product_id: str) -> ProductDetails | ToolError:
+    """Look up one product's name, garment type, full description, exact price, and colors.
+
+    Args:
+        product_id: The product `id` from search_products (e.g. "baseball-left-chest-crewneck").
+    """
+    try:
+        row = _details_row(product_id)
+    except sqlite3.Error:
+        log.warning("get_product_details failed", exc_info=True)
+        return LOOKUP_FAILED
+    if row is None:
+        return NOT_FOUND
+    _remember(ctx, row)
+    return _details(row)
+
+
+def get_my_account(ctx: RunContext[ChatDeps]) -> dict:
+    """The logged-in shopper's own first name and email.
+
+    Only call this when the shopper asks about their own account (e.g. "what email am I using?").
+    """
+    customer = ctx.deps.customer
+    if customer is None:
+        return {"logged_in": False}
+    return {"logged_in": True, "first_name": customer.first_name, "email": customer.email}
 
 
 def get_stock(ctx: RunContext[ChatDeps], product_id: str, size: str | None = None) -> StockInfo | ToolError:

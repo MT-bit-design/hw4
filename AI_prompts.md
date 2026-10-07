@@ -255,3 +255,34 @@ Git
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 8 - Customer memory
+
+**Prompt:**
+
+```text
+Problem 8: Customer memory.
+Chat history
+
+* Check the existing `chat_messages` table first, and use it if it fits. Never print any existing messages.
+* For logged-in shoppers, save every message and reply. When they come back, reload their last 30 messages into the chat panel. Add a "Clear chat" button that deletes only their own history.
+* Guests can still chat, but nothing is saved for them.
+
+Who's chatting
+
+* Find the user from the session cookie on the server, never from anything the browser sends. A shopper can only read or delete their own messages.
+* Put the first name and email in the agent's deps. The agent can greet by name, but only shows an email if the shopper asks for their own.
+
+Page context
+
+* The front end sends the current page and the product id, if it's a product page. The server checks the id and looks up the real product, so the agent knows what "this" means in "do you have this in pink?" It answers colors from the catalogue and never guesses.
+
+Docs and git
+
+* Add to `output/harness.md`: how history is stored, which customer fields the agent sees, and how page context is passed. Add a few lines to `prompt.md` on using the name and page context.
+* Log this prompt in `AI_prompts.md` as "Problem 8 - Customer memory." Commit it as "Problem 8 - Customer memory." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.

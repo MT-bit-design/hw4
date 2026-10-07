@@ -163,7 +163,7 @@ A new account adds one row to `users`:
 | SQL injection | Every query uses `?` placeholders; no SQL is built from user input. |
 | Bad input | The server checks everything again, whatever the browser did: a valid email format (max 254 characters), a password of 8–128 characters, the two passwords matching, and first and last names of 1–50 characters using letters, spaces, hyphens, apostrophes, and periods only. |
 | Cross-site requests (CSRF) | `SameSite=Lax` cookie; CORS allows credentials only for the Vite dev server (`http://localhost:5173`, `http://127.0.0.1:5173`); every `POST` must be `application/json`, and a request from any other `Origin` is rejected with `403`. |
-| Over-reaching database access | Products use a **read-only** connection (`mode=ro`). Auth uses a separate connection with an SQLite authorizer that only allows reading from and inserting into `users`. Any statement touching `chat_messages`, `catalogue`, or `inventory`, and any `UPDATE`, `DELETE`, or `DROP`, is refused before it runs. |
+| Over-reaching database access | Products use a **read-only** connection (`mode=ro`). Auth uses a separate connection with an SQLite authorizer that only allows reading from and inserting into `users`. Any statement touching `chat_messages`, `catalogue`, or `inventory`, and any `UPDATE`, `DELETE`, or `DROP`, is refused before it runs. Saved chat history (Problem 8) has its own connection, limited to reading, inserting, and deleting rows in `chat_messages`. |
 | Leaking secrets | Responses never include `password_hash`. `.env`, `data/`, and `*.db` are in `.gitignore`. |
 
 ---
@@ -232,13 +232,14 @@ Errors: a missing key gives `503`; model or network problems give `502` with a f
 
 ### Tools
 
-All three tools live in `backend/tools.py` and use `connect_readonly()`. That connection is opened in SQLite's read-only mode, and an SQLite authorizer lets it read only `catalogue` and `inventory`. Reading `users` or `chat_messages`, and any write, fails before the query runs. Every value is passed as a `?` parameter.
+The three product tools live in `backend/tools.py` and use `connect_readonly()`. That connection is opened in SQLite's read-only mode, and an SQLite authorizer lets it read only `catalogue` and `inventory`. Reading `users` or `chat_messages`, and any write, fails before the query runs. Every value is passed as a `?` parameter. A fourth tool, `get_my_account` (Problem 8), reads no database at all; it returns the logged-in shopper's own name and email from the deps.
 
 | Tool | Input | Returns | Reads |
 |---|---|---|---|
-| `search_products` | `query`, optional `max_price`, optional `limit` (1–8) | `{ match, products[] }`. Each product has `id`, `name`, `price`, `image_url`, `matches_all_words`. | `catalogue` |
+| `search_products` | `query`, optional `max_price`, optional `limit` (1–8) | `{ match, total_found, products[] }`. Each product has `id`, `name`, `price`, `matches_all_words`. | `catalogue` |
 | `get_product_details` | `product_id` | `ProductDetails`, or a `ToolError` | `catalogue` |
 | `get_stock` | `product_id`, optional `size` | `StockInfo`, or a `ToolError` | `catalogue`, `inventory` |
+| `get_my_account` | none | `{ logged_in, first_name, email }` for the session's own user | nothing (deps only) |
 
 **`search_products`**
 - **How it searches:** it splits the query into keywords, dropping filler words and anything shorter than 2 characters. Single characters like "1" or "s" appear in almost every product, so they would produce false "matches". It then scores each product by how many keywords appear in its name, type, description, colors, or tags.
@@ -255,12 +256,12 @@ All three tools live in `backend/tools.py` and use `connect_readonly()`. That co
 
 | Model | Fields | Why |
 |---|---|---|
-| `ProductDetails` | `id`, `name`, `garment_type`, `description`, `price` | Exactly what a "what is it / how much" answer needs. **`price` is a pre-formatted string** (`"$58.00"`), so the model copies it as-is and can't round or re-format it. `garment_type` helps it describe the item ("a crewneck sweatshirt"). Colors, tags, and image path are left out; they add tokens and invite the model to over-describe. |
+| `ProductDetails` | `id`, `name`, `garment_type`, `description`, `price`, `colors` | Exactly what a "what is it / how much" answer needs. **`price` is a pre-formatted string** (`"$58.00"`), so the model copies it as-is and can't round or re-format it. `garment_type` helps it describe the item ("a crewneck sweatshirt"). **`colors`** (added in Problem 8) is the catalogue's own list, so "do you have this in pink?" is answered from data, not guessed. Tags and image path are left out; they add tokens and invite the model to over-describe. |
 | `SizeStock` | `size`, `quantity`, `sold_out` | `quantity` is the exact number to quote. **`sold_out` is spelled out as a boolean** so the model never has to reason about "is 0 sold out?" and says "Sorry, the XS is sold out" consistently. |
 | `StockInfo` | `id`, `name`, `sizes[]`, `in_stock_sizes[]` | `sizes` holds the one size asked about, or all six. **`in_stock_sizes`** is always included, so when a size is sold out the model can offer alternatives without a second tool call. `name` lets the reply name the product correctly. |
 | `ToolError` | `error`, `message` | One small shape for every failure. `error` is a fixed code (`product_not_found`, `invalid_size`, `lookup_failed`) that the prompt maps to a behavior: search by name, list the real sizes, or "can't check right now, see the product page". `message` is a short hint for the model. |
 
-Left out on purpose: inventory row ids, raw image paths, and anything from `users` or `chat_messages`. Every tool also records the products it returned, so the reply can only show product cards for items it actually looked up.
+Left out on purpose: inventory row ids, raw image paths, and any database access to `users` or `chat_messages`. Every tool also records the products it returned, so the reply can only show product cards for items it actually looked up.
 
 ### How the prompt uses the tools
 
@@ -282,11 +283,16 @@ Tested in the chat widget, with every number checked against the database:
 | Boola Boola T-shirt in XXXL (invalid size) | XXXL isn't a size the shop carries; listed XS–XXL | — |
 | "And in small?" | "We have 12 in small (S)" | S = 12 |
 
-### Data the model never sees
+### What customer data the model sees
 
-- Nothing from `users` or `chat_messages` is ever sent to the model. The chat endpoint doesn't read the session or any user row.
-- The tools' database connection can't read those tables at all; SQLite's authorizer blocks it.
-- Chats are not saved to `chat_messages`.
+Updated in Problem 8; see "Customer memory" below for details.
+
+- **Guests:** nothing about them.
+- **Logged-in shoppers:**
+  - their **first name**, in the per-message context note;
+  - their **own email**, only through `get_my_account`, which the prompt says to call only when they ask;
+  - their **own last 10 saved messages**, as conversation history.
+- **Never:** password hashes, other users' data, `created_at`, or other users' messages. The product tools' connection still can't read `users` or `chat_messages`.
 
 ### Prompt-injection defenses
 
@@ -370,3 +376,66 @@ ChatWidget -> chatResults context (+ sessionStorage) -> PickedForYou on /product
 **Bug found and fixed during testing:**
 - **What happened:** for the off-topic pizza question, the agent still called `search_products("pizza")`. The empty result triggered "nothing found, clear the page", so an off-topic message changed the page.
 - **Fix:** the agent now marks such messages `off_topic: true`, and the server leaves the page alone whenever that's set. The prompt also tells the agent not to call tools for off-topic messages.
+
+---
+
+## Customer memory
+
+### How chat history is stored
+
+History uses the **existing `chat_messages` table**; it already fit, so nothing in the schema changed.
+
+| Column | What we store |
+|---|---|
+| `user_id` | The logged-in shopper's id, taken **from the session cookie on the server**. |
+| `role` | `user` or `assistant`. |
+| `content` | The message text, or the reply text. |
+| `products_json` | For replies with chat cards: `[{"id": "<product_id>"}, ...]`. Otherwise `NULL`. |
+| `created_at` | Set by the database. |
+
+- **Logged-in shoppers:** every successful exchange is saved as two rows, the message and the reply (`backend/history.py`, `save_exchange`). If saving fails, the shopper still gets the reply.
+- **Guests:** nothing is saved. Their history lives only in the browser tab and is sent with each message, trimmed to 10 turns.
+- **Reloading:** `GET /api/chat/history` returns the shopper's **last 30 messages**, oldest first. Cards are **rebuilt from the current catalogue** using only the product ids in `products_json`, so an old price is never shown. This also reads the different format used by the seed rows (`product_id` keys).
+- **Model history for logged-in shoppers:** the agent gets their own last 10 saved messages from the database, and the browser's copy is ignored. A shopper can't slip in a fake earlier assistant turn. Tested: a forged "the hoodie is $5.00" turn was ignored, and the bot quoted the real $68.00.
+- **Clear chat:** `DELETE /api/chat/history` deletes `WHERE user_id = <session user>`, and nothing else. A logged-out request gets a 401.
+- **Database access:** a dedicated connection (`connect_chat()` in `backend/db.py`) has an SQLite authorizer that only allows reading, inserting, and deleting rows in `chat_messages`. Tested: it can't read `users` or `catalogue`, update rows, or drop the table.
+
+**Who can see what.** The user id is **never** read from the request.
+- **Session only:** `session_user()` in `backend/auth.py` gets the user from the signed `HttpOnly` cookie. Every history query filters by that id.
+- **Tested:** shopper N sent `?user_id=<A>` and `{"user_id": <A>}` to the GET, DELETE, and chat endpoints. N got 0 of A's messages, deleted 0 of A's rows, and was told N's own email. The 22 pre-existing seed rows were never changed.
+
+### Which customer fields the agent sees
+
+`ChatDeps.customer` holds `Customer(user_id, first_name, email)` for logged-in shoppers, or `None` for guests.
+
+| Field | Where the model can see it |
+|---|---|
+| `first_name` | In the per-message "This conversation" note (`context_instructions` in `backend/agent.py`), stripped to letters, spaces, hyphens, apostrophes, and periods. Used for an occasional greeting. |
+| `email` | **Not** in the note. Only returned by the `get_my_account` tool, which the prompt allows only when the shopper asks about their own account. |
+| `user_id` | Never shown to the model; only used by the server to load and save history. |
+| Last name, password hash, `created_at`, other users | Never. |
+
+### How page context is passed
+
+1. On every message, `ChatWidget.tsx` sends `page: { path, product_id }`. `product_id` is set only when the URL is `/products/:id`.
+2. The server treats both as **untrusted** (`page_context()` in `backend/main.py`):
+   - `path` must match `^/[A-Za-z0-9/_-]{0,100}$`, or it's dropped.
+   - `product_id` is only used if `lookup_product()` finds a **real product with that id** in the catalogue (parameterized, read-only). Fake or injected ids (e.g. `' OR 1=1 --`) are ignored.
+3. The real product is put in `ChatDeps.viewed_product`: `ProductDetails` with `id`, `name`, `garment_type`, `price`, and **`colors` from the catalogue**.
+4. The context note tells the agent "the shopper is viewing this product; 'this' / 'it' means this item", including those facts. The prompt says to answer colors only from that list and never guess. Stock still comes from `get_stock`, using the product's id.
+
+### Tested
+
+| Test | Result |
+|---|---|
+| Guest asks a question | Answered; `saved: false`; row count unchanged; `GET` history is empty; `DELETE` returns 401. |
+| Logged in: "Do you remember my name?" | Greeted the shopper by first name; saved. |
+| Logged in: "What email am I signed in with?" | Showed only their own email. |
+| Other shopper passes A's `user_id` in the query or body | 0 messages returned, 0 deleted, own email shown. |
+| Product page `baseball-left-chest-crewneck`: "Do you have this in pink?" | "This one comes in navy and white, not pink…" (catalogue: `["navy", "white"]`). |
+| Same page: "How many medium of this one are left?" | "We have 5 in medium" (database M = 5). |
+| Product page `boola-boola-t-shirt`, in the browser: "Is this available in XL, what colors?" | "available in XL, with 2 in stock… navy, white, and gray" (database: XL = 2, colors navy/white/gray). |
+| Browser: log in → chat → refresh | Panel reloaded the greeting plus saved messages, including the product card. |
+| Browser: Clear chat → refresh | Panel and server both empty (0 saved). |
+| Browser: log out | Panel reset to the guest greeting and "Guest chat: nothing is saved" note. |
+| Seed users' existing rows | Unchanged throughout (counts only checked; no message was printed). |

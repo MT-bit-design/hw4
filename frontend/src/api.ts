@@ -114,19 +114,58 @@ export interface ChatReply {
   products: ChatProduct[];
   /** null means leave the page unchanged. */
   page_results: PageResults | null;
+  /** True when the server saved this exchange to the logged-in shopper's history. */
+  saved: boolean;
+}
+
+/** Where the shopper is. The server validates both fields and looks up the real product. */
+export interface PageContext {
+  path: string;
+  product_id: string | null;
+}
+
+export interface SavedMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  products: ChatProduct[];
+  created_at: string;
+}
+
+/** The logged-in shopper's last 30 messages (the server finds the user from the session cookie). */
+export async function fetchChatHistory(): Promise<{ logged_in: boolean; messages: SavedMessage[] }> {
+  const res = await fetch(`${API_BASE}/api/chat/history`, { credentials: "include" });
+  if (!res.ok) throw new ApiError("Couldn't load your chat history.", res.status);
+  return res.json();
+}
+
+/** Deletes the logged-in shopper's own saved messages. */
+export async function clearChatHistory(): Promise<number> {
+  const res = await fetch(`${API_BASE}/api/chat/history`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.detail ?? "Couldn't clear your chat.", res.status);
+  return data.deleted ?? 0;
 }
 
 /** Limits mirrored from the backend (backend/models.py); the server enforces them too. */
 export const CHAT_MAX_MESSAGE = 500;
 export const CHAT_MAX_HISTORY = 10;
 
-/** Sends a message plus recent history to the shop agent (POST /api/chat). */
-export async function sendChatMessage(message: string, history: ChatTurn[]): Promise<ChatReply> {
+/**
+ * Sends a message to the shop agent (POST /api/chat) with the current page.
+ * `history` is only used for guests; for logged-in shoppers the server uses their saved messages.
+ */
+export async function sendChatMessage(message: string, history: ChatTurn[], page: PageContext): Promise<ChatReply> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history: history.slice(-CHAT_MAX_HISTORY) }),
+    body: JSON.stringify({ message, history: history.slice(-CHAT_MAX_HISTORY), page }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.detail ?? "The assistant is unavailable right now.", res.status);

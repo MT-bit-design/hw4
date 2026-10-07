@@ -29,8 +29,9 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded  # noqa: E402
 from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
 
+import history  # noqa: E402
 from agent import ChatNotConfigured, run_chat  # noqa: E402
-from auth import ALLOWED_ORIGINS, client_ip, require_json_from_allowed_origin  # noqa: E402
+from auth import ALLOWED_ORIGINS, client_ip, require_json_from_allowed_origin, session_user  # noqa: E402
 from auth import router as auth_router  # noqa: E402
 from db import ROOT, connect_readonly  # noqa: E402
 from models import (  # noqa: E402
@@ -39,12 +40,17 @@ from models import (  # noqa: E402
     MAX_MESSAGE_CHARS,
     MAX_PAGE_CARDS,
     MAX_PRODUCT_CARDS,
+    MAX_SAVED_MESSAGES_SHOWN,
     ChatDeps,
+    ChatHistoryResponse,
     ChatRequest,
     ChatResponse,
+    Customer,
+    PageContextIn,
     PageResults,
     ShopReply,
 )
+from tools import lookup_product  # noqa: E402
 
 log = logging.getLogger("campus_customs")
 
@@ -81,7 +87,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -141,12 +147,6 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         raise HTTPException(status_code=400, detail=f"Please keep messages under {MAX_MESSAGE_CHARS} characters.")
     if len(body.history) > MAX_HISTORY_TURNS * 4:
         raise HTTPException(status_code=400, detail="Conversation history is too long.")
-    # Only the most recent turns are used; overly long turns are cut down.
-    history = [
-        turn.model_copy(update={"content": turn.content[:MAX_HISTORY_TURN_CHARS]})
-        for turn in body.history[-MAX_HISTORY_TURNS:]
-        if turn.content.strip()
-    ]
 
     wait = chat_limiter.check(client_ip(request))
     if wait:
@@ -156,8 +156,24 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             headers={"Retry-After": str(wait)},
         )
 
+    # Who's chatting comes only from the signed session cookie, never from the request body.
+    user = session_user(request)
+    deps = ChatDeps(customer=Customer(user["id"], user["first_name"], user["email"]) if user else None)
+    deps.page_path, deps.viewed_product = page_context(body.page)
+
+    if user:
+        # Logged in: history is the shopper's own saved messages (the browser's copy is ignored).
+        turns = history.model_history(user["id"], MAX_HISTORY_TURNS)
+    else:
+        # Guest: the browser's copy, trimmed; nothing is saved.
+        turns = [
+            turn.model_copy(update={"content": turn.content[:MAX_HISTORY_TURN_CHARS]})
+            for turn in body.history[-MAX_HISTORY_TURNS:]
+            if turn.content.strip()
+        ]
+
     try:
-        output, deps = await run_chat(message, history)
+        output, deps = await run_chat(message, turns, deps)
     except ChatNotConfigured:
         raise HTTPException(status_code=503, detail="The shop assistant isn't set up yet. Please try again later.")
     except UsageLimitExceeded:
@@ -166,7 +182,7 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         # The provider's safety filter (e.g. Azure content filter / jailbreak shield) blocked the message.
         if exc.status_code == 400 and "content_filter" in str(exc.body):
             log.info("chat blocked by provider content filter")
-            return ChatResponse(reply=BLOCKED_REPLY)
+            return finish_chat(user, message, ChatResponse(reply=BLOCKED_REPLY))
         log.warning("chat failed: ModelHTTPError %s", exc.status_code)
         raise HTTPException(status_code=502, detail="The shop assistant is having trouble right now. Please try again.")
     except Exception as exc:  # model/network errors: log the type only, never request contents or keys
@@ -181,7 +197,54 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             cards.append(card)
         if len(cards) == MAX_PRODUCT_CARDS:
             break
-    return ChatResponse(reply=output.reply.strip(), products=cards, page_results=page_results_for(output, deps))
+    response = ChatResponse(reply=output.reply.strip(), products=cards, page_results=page_results_for(output, deps))
+    return finish_chat(user, message, response)
+
+
+def finish_chat(user: dict | None, message: str, response: ChatResponse) -> ChatResponse:
+    """Save the exchange for logged-in shoppers. A save failure never loses the reply."""
+    if user:
+        try:
+            history.save_exchange(user["id"], message, response.reply, response.products)
+            response.saved = True
+        except sqlite3.Error as exc:
+            log.warning("saving chat history failed: %s", type(exc).__name__)
+    return response
+
+
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9/_\-]{0,100}$")
+
+
+def page_context(page: PageContextIn | None):
+    """Validate the page the browser says it's on. The path must look like one of our routes, and
+    the product id is only trusted after looking up the real product in the catalogue."""
+    if page is None:
+        return None, None
+    path = page.path if SAFE_PATH.fullmatch(page.path or "") else None
+    product = None
+    if page.product_id:
+        found = lookup_product(page.product_id)
+        if found:
+            product = found[0]
+    return path, product
+
+
+@app.get("/api/chat/history")
+def get_chat_history(request: Request) -> ChatHistoryResponse:
+    """The logged-in shopper's last 30 messages. Guests get an empty list."""
+    user = session_user(request)
+    if user is None:
+        return ChatHistoryResponse(logged_in=False)
+    return ChatHistoryResponse(logged_in=True, messages=history.load_messages(user["id"], MAX_SAVED_MESSAGES_SHOWN))
+
+
+@app.delete("/api/chat/history", dependencies=[Depends(require_json_from_allowed_origin)])
+def clear_chat_history(request: Request) -> dict:
+    """Delete the logged-in shopper's own messages (and nobody else's)."""
+    user = session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Log in to clear saved chats.")
+    return {"deleted": history.clear(user["id"])}
 
 
 def page_results_for(output: ShopReply, deps: ChatDeps) -> PageResults | None:

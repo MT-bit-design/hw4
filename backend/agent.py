@@ -13,14 +13,14 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")  # keep server logs clean
 
 from openai import AsyncOpenAI  # noqa: E402
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
 from models import ChatDeps, ChatTurn, ShopReply
-from tools import get_product_details, get_stock, search_products
+from tools import get_my_account, get_product_details, get_stock, search_products
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "prompt.md"
 DEFAULT_MODEL = "gpt-5.6-luna"
@@ -60,6 +60,28 @@ def build_model() -> OpenAIChatModel:
     return OpenAIChatModel(model_name(), provider=OpenAIProvider(openai_client=client))
 
 
+def context_instructions(ctx: RunContext[ChatDeps]) -> str:
+    """Per-request facts for the agent, built on the server from the session and a validated page.
+    The email is deliberately not included here; it's only available through get_my_account."""
+    deps = ctx.deps
+    lines = ["## This conversation"]
+    if deps.customer:
+        name = "".join(ch for ch in deps.customer.first_name if ch.isalpha() or ch in " -'.")[:40].strip()
+        lines.append(f"- The shopper is logged in. First name: {name or 'unknown'}.")
+    else:
+        lines.append("- The shopper is a guest (not logged in). You don't know their name.")
+    if deps.viewed_product:
+        p = deps.viewed_product
+        lines.append(
+            f"- The shopper is viewing this product page right now; \"this\" / \"it\" means this item: "
+            f"id `{p.id}`, name \"{p.name}\", {p.garment_type}, price {p.price}, "
+            f"colors from the catalogue: {', '.join(p.colors) or 'not listed'}."
+        )
+    elif deps.page_path:
+        lines.append(f"- The shopper is on the page `{deps.page_path}` (not a single product page).")
+    return "\n".join(lines)
+
+
 @lru_cache(maxsize=1)
 def get_agent() -> Agent[ChatDeps, ShopReply]:
     """Built once on first use, so the server still starts without a key."""
@@ -67,15 +89,15 @@ def get_agent() -> Agent[ChatDeps, ShopReply]:
         build_model(),
         deps_type=ChatDeps,
         output_type=ShopReply,
-        instructions=load_prompt(),
-        tools=[search_products, get_product_details, get_stock],
+        instructions=[load_prompt(), context_instructions],
+        tools=[search_products, get_product_details, get_stock, get_my_account],
         model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
         retries=1,
     )
 
 
 def to_message_history(history: list[ChatTurn]) -> list[ModelMessage]:
-    """Browser-supplied history becomes plain user/assistant text turns (never instructions)."""
+    """History (saved, or browser-supplied for guests) becomes plain user/assistant text turns, never instructions."""
     messages: list[ModelMessage] = []
     for turn in history:
         if turn.role == "user":
@@ -85,8 +107,7 @@ def to_message_history(history: list[ChatTurn]) -> list[ModelMessage]:
     return messages
 
 
-async def run_chat(message: str, history: list[ChatTurn]) -> tuple[ShopReply, ChatDeps]:
-    deps = ChatDeps()
+async def run_chat(message: str, history: list[ChatTurn], deps: ChatDeps) -> tuple[ShopReply, ChatDeps]:
     result = await get_agent().run(
         message,
         message_history=to_message_history(history),

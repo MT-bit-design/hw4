@@ -205,14 +205,25 @@ def logout(request: Request) -> dict:
     return {"ok": True}
 
 
-@router.get("/me")
-def me(request: Request) -> dict:
+def session_user(request: Request) -> dict | None:
+    """The logged-in user, from the signed session cookie only (never from the request body).
+
+    Returns the public fields (`id`, `first_name`, `last_name`, `email`) or None for guests.
+    """
     uid = request.session.get("uid")
     if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Not logged in.")
+        return None
     with connect_users() as conn:
         row = conn.execute(f"SELECT {USER_COLUMNS} FROM users WHERE id = ?", (uid,)).fetchone()
     if row is None:
         request.session.clear()
+        return None
+    return public_user(row)
+
+
+@router.get("/me")
+def me(request: Request) -> dict:
+    user = session_user(request)
+    if user is None:
         raise HTTPException(status_code=401, detail="Not logged in.")
-    return {"user": public_user(row)}
+    return {"user": user}

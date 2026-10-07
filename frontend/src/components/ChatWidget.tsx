@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth";
 import { useChatResults } from "../chatResults";
 import {
   ApiError,
   CHAT_MAX_MESSAGE,
+  clearChatHistory,
+  fetchChatHistory,
   formatPrice,
   imageSrc,
   sendChatMessage,
   type ChatProduct,
   type ChatTurn,
+  type PageContext,
 } from "../api";
 
 interface Message {
@@ -21,22 +25,58 @@ interface Message {
   local?: boolean;
 }
 
-const greeting: Message = {
-  role: "assistant",
-  text: "Hi! I'm the Campus Customs assistant. Looking for something blue?",
-  local: true,
-};
+function greetingFor(firstName?: string): Message {
+  return {
+    role: "assistant",
+    text: firstName
+      ? `Welcome back, ${firstName}! Looking for something blue today?`
+      : "Hi! I'm the Campus Customs assistant. Looking for something blue?",
+    local: true,
+  };
+}
+
+/** The page the shopper is on, sent with every message so "this" can be resolved on the server. */
+function pageContext(pathname: string): PageContext {
+  const match = pathname.match(/^\/products\/([^/]+)$/);
+  return { path: pathname, product_id: match ? decodeURIComponent(match[1]) : null };
+}
 
 export default function ChatWidget() {
+  const { user, loading: authLoading } = useAuth();
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([greeting]);
+  const [messages, setMessages] = useState<Message[]>([greetingFor()]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const { apply: applyPageResults } = useChatResults();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const onProductsPage = pathname === "/products";
+  const userId = user?.id;
+
+  // On login (or page load while logged in), reload the last 30 saved messages. On logout, start fresh.
+  useEffect(() => {
+    if (authLoading) return;
+    if (userId === undefined) {
+      setMessages([greetingFor()]);
+      return;
+    }
+    let cancelled = false;
+    fetchChatHistory()
+      .then(({ messages: saved }) => {
+        if (cancelled) return;
+        setMessages([
+          greetingFor(user?.first_name),
+          ...saved.map((m) => ({ role: m.role, text: m.content, products: m.products })),
+        ]);
+      })
+      .catch(() => !cancelled && setMessages([greetingFor(user?.first_name)]));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, authLoading]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -51,7 +91,7 @@ export default function ChatWidget() {
     setMessages((m) => [...m, { role: "user", text }]);
     setSending(true);
     try {
-      const { reply, products, page_results } = await sendChatMessage(text, history);
+      const { reply, products, page_results } = await sendChatMessage(text, history, pageContext(pathname));
       // null = leave the page alone (off-topic, single-product questions); otherwise replace or clear.
       if (page_results) applyPageResults(page_results);
       const sentToPage = !!page_results && page_results.products.length > 0;
@@ -64,8 +104,27 @@ export default function ChatWidget() {
     }
   }
 
+  async function handleClear() {
+    if (clearing) return;
+    if (!user) {
+      setMessages([greetingFor()]); // guests: nothing is saved, just reset the panel
+      return;
+    }
+    setClearing(true);
+    try {
+      await clearChatHistory();
+      setMessages([greetingFor(user.first_name)]);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Couldn't clear your chat. Try again.";
+      setMessages((m) => [...m, { role: "assistant", text: msg, local: true }]);
+    } finally {
+      setClearing(false);
+    }
+  }
+
   // Only the newest page-updating reply gets the button; older results were replaced.
   const lastPageReply = messages.reduce((last, m, i) => (m.sentToPage ? i : last), -1);
+  const hasConversation = messages.some((m) => !m.local);
 
   return (
     <>
@@ -73,10 +132,23 @@ export default function ChatWidget() {
         <section className="chat-panel" aria-label="Chat with Campus Customs">
           <header className="chat-header">
             <span>Campus Customs Assistant</span>
-            <button aria-label="Close chat" onClick={() => setOpen(false)}>
-              ✕
-            </button>
+            <span className="chat-header-actions">
+              <button
+                className="chat-clear"
+                onClick={handleClear}
+                disabled={clearing || sending || !hasConversation}
+                title={user ? "Delete your saved chat history" : "Clear this chat"}
+              >
+                {clearing ? "Clearing…" : "Clear chat"}
+              </button>
+              <button aria-label="Close chat" onClick={() => setOpen(false)}>
+                ✕
+              </button>
+            </span>
           </header>
+          <p className="chat-note">
+            {user ? "Your chats are saved to your account." : "Guest chat: nothing is saved. Log in to keep your chats."}
+          </p>
           <div className="chat-messages">
             {messages.map((m, i) => (
               <div key={i} className={`chat-turn ${m.role}`}>

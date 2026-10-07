@@ -22,9 +22,17 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class PageContextIn(BaseModel):
+    """Where the shopper is. Untrusted: the server validates both fields."""
+
+    path: str = ""
+    product_id: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
-    history: list[ChatTurn] = []
+    history: list[ChatTurn] = []  # only used for guests; logged-in history comes from the database
+    page: PageContextIn | None = None
 
 
 class ProductCard(BaseModel):
@@ -53,6 +61,23 @@ class ChatResponse(BaseModel):
     reply: str
     products: list[ProductCard] = []  # chat panel cards (max MAX_PRODUCT_CARDS)
     page_results: PageResults | None = None  # None -> leave the page as it is
+    saved: bool = False  # True when this exchange was saved to the shopper's history
+
+
+MAX_SAVED_MESSAGES_SHOWN = 30  # reloaded into the chat panel
+
+
+class HistoryMessage(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    products: list[ProductCard] = []
+    created_at: str
+
+
+class ChatHistoryResponse(BaseModel):
+    logged_in: bool
+    messages: list[HistoryMessage] = []
 
 
 # ---------- tool results (what the model sees) ----------
@@ -68,6 +93,7 @@ class ProductDetails(BaseModel):
     garment_type: str
     description: str
     price: str  # pre-formatted, e.g. "$58.00", so the model quotes it exactly
+    colors: list[str]  # the colors this item comes in, straight from the catalogue
 
 
 class SizeStock(BaseModel):
@@ -126,9 +152,21 @@ class SearchRecord:
 
 
 @dataclass
+class Customer:
+    """The logged-in shopper, looked up from the session cookie on the server."""
+
+    user_id: int
+    first_name: str
+    email: str  # only given to the model through get_my_account, when the shopper asks
+
+
+@dataclass
 class ChatDeps:
     """Per-request state shared with tools. Records every product a tool returned,
     so cards (chat or page) can only show real catalogue items the agent actually looked up."""
 
     seen_products: dict[str, ProductCard] = field(default_factory=dict)
     searches: list[SearchRecord] = field(default_factory=list)
+    customer: Customer | None = None  # None for guests
+    page_path: str | None = None  # validated path the shopper is on, e.g. "/products"
+    viewed_product: ProductDetails | None = None  # the real product, if they're on a product page
