@@ -335,3 +335,24 @@ Log this prompt in `AI_prompts.md` as "Problem 10 - Style the website." Commit i
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 11 - Site testing
+
+**Prompt:**
+
+```text
+Problem 11: Site testing.
+Test the live site in the real browser and make `output/app_check.html`, a page I can double-click to open. Take real screenshots of the running site and save them in `output/app_check_images/`. Link them with relative paths, like `app_check_images/inventory.png`.
+Make 3 checks. Each gets a heading, the screenshot, and one or two sentences on what it proves.
+
+1. Stock and price: the chat answers an inventory question honestly. Ask about one product and size, like the baseball left chest crewneck in XS (sold out). Write the database value in the caption.
+2. Search cards: ask "What hoodies do you have?" and show the cards that appear on the page. Write the card count and the database count in the caption.
+3. A Problem 9 feature: show the size search ("hoodies in medium under $60") working.
+
+Use a test account only. Don't show any real user's email, any key, or any `.env` file in a screenshot. Check that every image file exists and that the page opens with no broken images. Keep the page simple and clean, in the site's navy style.
+Log this prompt in `AI_prompts.md` as "Problem 11 - Site testing." Commit it as "Problem 11 - Site testing." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.

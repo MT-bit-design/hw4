@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Customs: Site check</title>
+  <style>
+    :root { --navy: #00356b; --orange: #c8571b; --ink: #18212d; --muted: #5f6b7a; --line: #e6e9ee; --surface: #fafbfc; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #fff; color: var(--ink); font-family: "Segoe UI", Carlito, Calibri, sans-serif; line-height: 1.6; }
+    header { background: var(--navy); color: #fff; padding: 2.2rem 1.5rem; }
+    header .wrap, main { max-width: 980px; margin: 0 auto; }
+    header h1 { margin: 0 0 0.3rem; font-size: 1.9rem; letter-spacing: -0.01em; }
+    header p { margin: 0; opacity: 0.85; }
+    main { padding: 2rem 1.5rem 3rem; }
+    .meta { color: var(--muted); font-size: 0.92rem; border-left: 3px solid var(--orange); padding-left: 0.9rem; margin-bottom: 2.5rem; }
+    section { margin-bottom: 3rem; }
+    h2 { color: var(--navy); font-size: 1.35rem; margin: 0 0 0.25rem; }
+    .label { color: var(--orange); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 0.4rem; }
+    figure { margin: 1rem 0 0; display: grid; grid-template-columns: minmax(0, 420px) 1fr; gap: 1.75rem; align-items: start; }
+    img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 16px rgba(16, 24, 40, 0.07); }
+    figcaption { font-size: 1rem; }
+    figcaption p { margin: 0 0 0.8rem; }
+    .result { display: inline-block; background: #e9f5ee; color: #1b6b3a; font-weight: 700; font-size: 0.8rem; padding: 0.15rem 0.6rem; border-radius: 999px; margin-bottom: 0.7rem; }
+    table { border-collapse: collapse; font-size: 0.92rem; width: 100%; }
+    td, th { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; width: 38%; }
+    code { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; font-size: 0.88em; color: var(--navy); }
+    header code { background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.3); color: #fff; }
+    footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+    @media (max-width: 760px) { figure { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Campus Customs: Site check</h1>
+      <p>Three checks of the live site, captured in a real browser and compared with <code>campus_customs.db</code>.</p>
+    </div>
+  </header>
+
+  <main>
+    <p class="meta">
+      Tested on the running app (React front end on port 5173, FastAPI + PydanticAI backend on port 8000), logged in as the
+      <strong>fake test account "Nora"</strong> (created for this homework, not a real user). The browser window was
+      750&times;910 px. Database values were read in read-only mode at the same time.
+    </p>
+
+    <section>
+      <p class="label">Check 1</p>
+      <h2>Stock and price: the chat answers honestly</h2>
+      <figure>
+        <img src="app_check_images/inventory.jpg" alt="Chat answering that the Baseball Left Chest Crewneck is sold out in XS, next to the product page's XS size tile marked Sold out" />
+        <figcaption>
+          <span class="result">Pass</span>
+          <p>On the Baseball Left Chest Crewneck page, the shopper asked <em>"Do you have the baseball left chest crewneck in XS?"</em>
+            The bot answered <em>"Sorry, Nora, the XS is sold out… It's currently in stock in S, M, L, and XXL"</em>, and the page's own XS tile also says <strong>Sold out</strong>.</p>
+          <p>This proves the answer comes from a real stock lookup, not a guess: every size it named matches the database.</p>
+          <table>
+            <tr><th>Database: XS</th><td><strong>0</strong> (sold out)</td></tr>
+            <tr><th>Database: other sizes</th><td>S 15, M 5, L 25, XL 0, XXL 25</td></tr>
+            <tr><th>Database: price</th><td>$58.00 (card shows $58.00)</td></tr>
+          </table>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <p class="label">Check 2</p>
+      <h2>Search cards: "What hoodies do you have?"</h2>
+      <figure>
+        <img src="app_check_images/search_cards.jpg" alt="Products page with the Picked for you section showing hoodie cards and the label showing 12 of 27" />
+        <figcaption>
+          <span class="result">Pass</span>
+          <p>After the chat question, the Products page shows a <strong>Picked for you</strong> section with full product cards built from the search tool's database results, not from the model's text.</p>
+          <p>The page shows the 12-card limit and says how many matched in total; the screenshot shows the first row, and all 12 cards were counted on the page.</p>
+          <table>
+            <tr><th>Cards on the page</th><td><strong>12</strong> ("showing 12 of 27")</td></tr>
+            <tr><th>Database: hoodies</th><td><strong>27</strong> products contain "hoodie"</td></tr>
+            <tr><th>Card prices</th><td>All 12 match the database</td></tr>
+          </table>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <p class="label">Check 3 &middot; Problem 9 feature</p>
+      <h2>Size search: "hoodies in medium under $60"</h2>
+      <figure>
+        <img src="app_check_images/size_search.jpg" alt="Chat reply listing two hoodies in medium under 60 dollars, with the page showing the same two products" />
+        <figcaption>
+          <span class="result">Pass</span>
+          <p>The new <code>search_by_size</code> tool returned only hoodies that have a medium in stock and cost $60 or less. The bot named both at their real price, and the page shows the same two ("hoodie in M": 2 items).</p>
+          <table>
+            <tr><th>Shown</th><td>Ua Gameday Double Knit Hood $45.00<br />Yale Sports Hoodie Tennis $45.00</td></tr>
+            <tr><th>Database: hoodies, M in stock, &le; $60</th><td><strong>2</strong>: the same two, M stock 8 and 25, both $45.00</td></tr>
+          </table>
+        </figcaption>
+      </figure>
+    </section>
+
+    <footer>
+      Screenshots are unedited captures of the running site. No real customer data, email addresses, API keys, or <code>.env</code> contents appear in them.
+    </footer>
+  </main>
+</body>
+</html>
