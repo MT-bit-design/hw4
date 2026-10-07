@@ -13,16 +13,31 @@ from pathlib import Path
 from pydantic_ai import RunContext
 
 from db import connect_readonly
-from models import SIZES, ChatDeps, ProductCard, ProductDetails, SizeStock, StockInfo, ToolError
+from models import (
+    MAX_PAGE_CARDS,
+    SHORT_DESCRIPTION_CHARS,
+    SIZES,
+    ChatDeps,
+    ProductCard,
+    ProductDetails,
+    SearchRecord,
+    SizeStock,
+    StockInfo,
+    ToolError,
+)
 
 log = logging.getLogger("campus_customs.tools")
 
-MAX_RESULTS = 8
+MAX_RESULTS = 8  # products listed back to the model (the page can get up to MAX_PAGE_CARDS)
 STOPWORDS = {
     "a", "an", "and", "any", "are", "do", "for", "have", "i", "in", "is", "it", "me", "my",
     "of", "on", "or", "show", "some", "the", "to", "want", "with", "you", "your", "yale",
+    "what", "which", "does", "got", "looking", "find", "need", "under", "less", "than", "below",
+    "how", "much", "many", "please", "can", "could", "would", "there", "these", "those", "this",
+    "that", "get", "buy", "all", "sell", "carry", "options",
 }
 HAYSTACK = "lower(name || ' ' || garment_type || ' ' || description || ' ' || colors || ' ' || search_tags)"
+CARD_COLUMNS = "product_id, name, price, image_file_path, garment_type, description"
 
 # Accepted spellings -> canonical size. Keys are lower-case with spaces, dots, and hyphens removed.
 SIZE_ALIASES = {
@@ -55,44 +70,81 @@ def normalize_size(raw: str) -> str | None:
     return SIZE_ALIASES.get(key)
 
 
-def _remember(ctx: RunContext[ChatDeps], row: sqlite3.Row) -> None:
-    """Record a product the agent looked up, so the reply may show it as a card."""
-    ctx.deps.seen_products[row["product_id"]] = ProductCard(
-        id=row["product_id"], name=row["name"], price=row["price"], image_url=image_url(row["image_file_path"])
+def short_description(text: str, limit: int = SHORT_DESCRIPTION_CHARS) -> str:
+    """First sentence or ~110 characters, cut at a word boundary."""
+    first = text.split(". ")[0].rstrip(".")
+    if len(first) <= limit:
+        return first + "."
+    return first[:limit].rsplit(" ", 1)[0].rstrip(",;") + "…"
+
+
+def card_from_row(row: sqlite3.Row) -> ProductCard:
+    """Build a card from a database row (needs the CARD_COLUMNS)."""
+    return ProductCard(
+        id=row["product_id"],
+        name=row["name"],
+        price=row["price"],
+        image_url=image_url(row["image_file_path"]),
+        garment_type=row["garment_type"],
+        short_description=short_description(row["description"]),
     )
 
 
+def _remember(ctx: RunContext[ChatDeps], row: sqlite3.Row) -> ProductCard:
+    """Record a product the agent looked up, so the reply may show it as a card."""
+    card = card_from_row(row)
+    ctx.deps.seen_products[card.id] = card
+    return card
+
+
+def _singular(word: str) -> str:
+    """'hoodies' -> 'hoodie', 'crewnecks' -> 'crewneck', 'zips' -> 'zip'; leaves 'dress', 'gas' alone."""
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _keywords(query: str) -> list[str]:
-    """Search words: lower-case, no filler words, and at least 2 characters
+    """Search words: lower-case, no filler words, singular, and at least 2 characters
     (single characters like "1" or "s" match almost everything)."""
     words = re.findall(r"[a-z0-9]+", query.lower())
-    return [w for w in words if len(w) >= 2 and w not in STOPWORDS][:8]
+    out: list[str] = []
+    for w in words:
+        if len(w) < 2 or w in STOPWORDS:
+            continue
+        w = _singular(w)
+        if w not in out:
+            out.append(w)
+    return out[:8]
 
 
-def _search(words: list[str], max_price: float | None, limit: int) -> list[sqlite3.Row]:
-    """Rank catalogue rows by how many keywords they match (all values passed as ? parameters).
-    With no keywords, returns rows within the price filter, cheapest first."""
+def _filters(words: list[str], max_price: float | None, require_all: bool) -> tuple[str, str, list, list]:
+    """Build (score_sql, where_sql, score_params, where_params). Every value is a ? parameter."""
     score_sql = " + ".join([f"({HAYSTACK} LIKE ?)"] * len(words)) or "0"
-    params: list = [f"%{w}%" for w in words]
-    where = ["1 = 1"]
+    score_params = [f"%{w}%" for w in words]
+    where, where_params = ["1 = 1"], []
     if words:
-        where.append(f"({score_sql}) > 0")
-        params += [f"%{w}%" for w in words]
+        where.append(f"({score_sql}) {'=' if require_all else '>='} ?")
+        where_params += score_params + [len(words) if require_all else 1]
     if max_price is not None:
         where.append("price <= ?")
-        params.append(float(max_price))
-    params.append(limit)
-    order = "score DESC, name" if words else "price, name"
+        where_params.append(float(max_price))
+    return score_sql, " AND ".join(where), score_params, where_params
 
-    sql = f"""
-        SELECT product_id, name, price, image_file_path, ({score_sql}) AS score
-        FROM catalogue
-        WHERE {' AND '.join(where)}
-        ORDER BY {order}
-        LIMIT ?
-    """
+
+def _search(words: list[str], max_price: float | None, require_all: bool) -> tuple[list[sqlite3.Row], int]:
+    """Return (up to MAX_PAGE_CARDS rows ranked by keyword hits, total matching count).
+    With no keywords, rows within the price filter come back cheapest first."""
+    score_sql, where_sql, score_params, where_params = _filters(words, max_price, require_all)
+    order = "score DESC, name" if words else "price, name"
     with connect_readonly() as conn:
-        return conn.execute(sql, params).fetchall()
+        rows = conn.execute(
+            f"SELECT {CARD_COLUMNS}, ({score_sql}) AS score FROM catalogue "
+            f"WHERE {where_sql} ORDER BY {order} LIMIT ?",
+            score_params + where_params + [MAX_PAGE_CARDS],
+        ).fetchall()
+        total = conn.execute(f"SELECT count(*) FROM catalogue WHERE {where_sql}", where_params).fetchone()[0]
+    return rows, total
 
 
 def search_products(
@@ -101,17 +153,19 @@ def search_products(
     max_price: float | None = None,
     limit: int = 5,
 ) -> dict:
-    """Search the Campus Customs catalogue. Use it to turn a product name into an id.
+    """Search the Campus Customs catalogue. Use it for browsing ("what hoodies do you have?")
+    and to turn a product name into an id.
 
     Args:
-        query: What the shopper wants, e.g. "navy hoodie", "baseball left chest crewneck", "gift".
+        query: What the shopper wants, e.g. "hoodie", "gray crewneck", "baseball left chest crewneck", "gift".
         max_price: Optional highest price in dollars. Pass it whenever the shopper gives a budget.
-        limit: How many results to return (1-8).
+        limit: How many products to list back to you (1-8). Up to 12 can be shown on the page.
 
-    Returns `match` and `products`. Each product has `id`, `name`, `price` (formatted, e.g. "$68.00"),
-    `image_url`, and `matches_all_words` (true if every query word was found in that product).
+    Returns `match`, `total_found` (how many products match in the whole catalogue), and `products`.
+    Each product has `id`, `name`, `price` (formatted, e.g. "$68.00"), and `matches_all_words`.
     `match` is:
-    - "keywords": products matched the query words, best first.
+    - "all_words": every product listed contains every query word.
+    - "some_words": no product contains every word; these match some of them, best first.
     - "price_only": nothing matched the words, so these are products within `max_price`, cheapest first.
     - "none": nothing found.
     Does not include descriptions or stock; use get_product_details / get_stock with the `id`.
@@ -120,29 +174,38 @@ def search_products(
     words = _keywords(query)
 
     try:
-        rows, match = [], "none"
+        rows, total, match = [], 0, "none"
         if words:
-            rows = _search(words, max_price, limit)
-            match = "keywords" if rows else "none"
+            # Prefer products that contain every word; fall back to partial matches.
+            rows, total = _search(words, max_price, require_all=True)
+            match = "all_words" if rows else "none"
+            if not rows:
+                rows, total = _search(words, max_price, require_all=False)
+                match = "some_words" if rows else "none"
         if not rows and max_price is not None:
             # No usable words (or words like "gift" that appear in no product text): use the budget alone.
-            rows = _search([], max_price, limit)
+            rows, total = _search([], max_price, require_all=False)
             match = "price_only" if rows else "none"
     except sqlite3.Error:
         log.warning("search_products failed", exc_info=True)
         return LOOKUP_FAILED.model_dump()
 
-    products = []
-    for r in rows:
-        _remember(ctx, r)
-        products.append({
-            "id": r["product_id"],
-            "name": r["name"],
-            "price": f"${r['price']:.2f}",
-            "image_url": image_url(r["image_file_path"]),
-            "matches_all_words": bool(words) and r["score"] == len(words),
-        })
-    return {"match": match, "products": products}
+    cards = [_remember(ctx, r) for r in rows]
+    # The page shows these exact cards (never anything the model writes).
+    ctx.deps.searches.append(SearchRecord(query=query.strip()[:60], total=total, cards=cards))
+    return {
+        "match": match,
+        "total_found": total,
+        "products": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "price": f"${c.price:.2f}",
+                "matches_all_words": bool(words) and r["score"] == len(words),
+            }
+            for c, r in zip(cards[:limit], rows)
+        ],
+    }
 
 
 def get_product_details(ctx: RunContext[ChatDeps], product_id: str) -> ProductDetails | ToolError:
@@ -196,7 +259,7 @@ def get_stock(ctx: RunContext[ChatDeps], product_id: str, size: str | None = Non
     try:
         with connect_readonly() as conn:
             product = conn.execute(
-                "SELECT product_id, name, price, image_file_path FROM catalogue WHERE product_id = ?",
+                f"SELECT {CARD_COLUMNS} FROM catalogue WHERE product_id = ?",
                 (product_id.strip(),),
             ).fetchone()
             if product is None:

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchProducts, type Product } from "../api";
+import PickedForYou from "../components/PickedForYou";
 import ProductCard from "../components/ProductCard";
 
 export default function Products() {
@@ -30,6 +31,8 @@ export default function Products() {
 
   return (
     <div className="container section">
+      <PickedForYou />
+
       <div className="page-head">
         <h1>The collection</h1>
         <p>Every hoodie, crewneck, and tee we've got. Find yours.</p>

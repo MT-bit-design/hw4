@@ -215,3 +215,43 @@ Show me `git status` and `git log --format="%h | %an %ae | %s"` at the end.
 ```
 
 What was missing: the first version let a single-character keyword like "1" produce confident-looking matches.
+
+---
+
+## Problem 7 - Chat search that updates the page
+
+**Prompt:**
+
+```text
+Problem 7: Chat search that updates the page.
+The chat panel already shows small product cards. Now make the website page itself update. When a shopper asks about a type of item, like "what hoodies do you have?", the matching products should show up on the page as full product cards (image, name, price, short info).
+How it works
+
+* The agent searches the catalogue and returns structured product matches. The front end draws them. Cards must come from what the search tool actually returned, never from text the model wrote.
+* Add the fields the page cards need to the product card type in `models.py` (like a short description), and keep the contract simple.
+* Put the results in shared front end state. Show them in a clearly labeled "Picked for you" section at the top of the Products page, with a Clear button. If the shopper is on another page when the results arrive, show a "See them on the page" button in the chat that takes them to the Products page.
+* Let the page show more cards than the chat panel does, up to 12, so "what hoodies do you have?" gives a real list. Keep the agent's reply short and don't make it list every item.
+* If a search finds nothing, don't show an empty or old section. Say so politely in the chat.
+
+Single-item pages still work
+Every card, including the ones the chat just put on the page, opens the single-item page from Problem 3 when clicked. That page still shows the big image, the full text, and sizes with stock. The browser back button should return to the page with the chat results still there.
+Docs
+
+* Update `backend/prompts/prompt.md`, so the agent knows its search results go to the page and it should keep its text short.
+* Update `output/harness.md` to explain how search results get from the agent to the page, with the card fields and the 12 card limit.
+
+Test it in the real browser and check against the database
+
+1. "What hoodies do you have?" Compare the number of cards and each price with the database.
+2. "Show me a gray crewneck under $60." Check that every card is under $60.
+3. Click a card that the chat put on the page. Check that the detail page opens with sizes and stock, and that the back button returns to the results.
+4. Ask for something that doesn't exist. The page should show no cards.
+5. Ask about something off topic. The page should not change.
+
+Git
+
+* Log this prompt in `AI_prompts.md` as "Problem 7 - Chat search that updates the page."
+* Commit it as "Problem 7 - Chat search that updates the page." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.

@@ -87,11 +87,21 @@ export const imageSrc = (imageUrl: string) => `${API_BASE}${imageUrl}`;
 export const formatPrice = (price: number) =>
   price.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+/** A product card sent by the chat API. Built by the server from database rows, never from model text. */
 export interface ChatProduct {
   id: string;
   name: string;
   price: number;
   image_url: string;
+  garment_type: string;
+  short_description: string;
+}
+
+/** Search results for the Products page. Empty `products` means "found nothing: clear the page". */
+export interface PageResults {
+  query: string;
+  total: number;
+  products: ChatProduct[];
 }
 
 export interface ChatTurn {
@@ -102,6 +112,8 @@ export interface ChatTurn {
 export interface ChatReply {
   reply: string;
   products: ChatProduct[];
+  /** null means leave the page unchanged. */
+  page_results: PageResults | null;
 }
 
 /** Limits mirrored from the backend (backend/models.py); the server enforces them too. */

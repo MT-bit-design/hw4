@@ -37,9 +37,13 @@ from models import (  # noqa: E402
     MAX_HISTORY_TURN_CHARS,
     MAX_HISTORY_TURNS,
     MAX_MESSAGE_CHARS,
+    MAX_PAGE_CARDS,
     MAX_PRODUCT_CARDS,
+    ChatDeps,
     ChatRequest,
     ChatResponse,
+    PageResults,
+    ShopReply,
 )
 
 log = logging.getLogger("campus_customs")
@@ -177,7 +181,25 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             cards.append(card)
         if len(cards) == MAX_PRODUCT_CARDS:
             break
-    return ChatResponse(reply=output.reply.strip(), products=cards)
+    return ChatResponse(reply=output.reply.strip(), products=cards, page_results=page_results_for(output, deps))
+
+
+def page_results_for(output: ShopReply, deps: ChatDeps) -> PageResults | None:
+    """What the Products page should do, decided only from recorded search_products results:
+
+    - off-topic message, or no search this turn  -> None (page unchanged)
+    - last search found nothing                  -> empty results (page clears old cards)
+    - agent marked it a browse (show_on_page)    -> that search's cards, up to MAX_PAGE_CARDS
+    - otherwise (one-product question)           -> None
+    """
+    if output.off_topic or not deps.searches:
+        return None
+    last = deps.searches[-1]
+    if not last.cards:
+        return PageResults(query=last.query, total=0, products=[])
+    if output.show_on_page:
+        return PageResults(query=last.query, total=last.total, products=last.cards[:MAX_PAGE_CARDS])
+    return None
 
 
 def image_url(image_file_path: str) -> str:

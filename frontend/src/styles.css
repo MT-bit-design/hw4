@@ -122,6 +122,19 @@ h3 { font-size: 1.1rem; }
 .badge { position: absolute; top: 0.75rem; left: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
 .badge-out { background: var(--ink); color: var(--white); }
 
+/* Picked for you (chat results on the Products page) */
+.picked {
+  background: var(--sky); border: 1px solid #cfdcee; border-left: 5px solid var(--navy);
+  border-radius: var(--radius); padding: 1.5rem; margin-bottom: 2.5rem; scroll-margin-top: 90px;
+}
+.picked-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.25rem; }
+.picked-head h2 { margin: 0; }
+.picked-head .eyebrow { margin-bottom: 0.3rem; }
+.picked-sub { margin: 0.3rem 0 0; color: var(--muted); }
+.btn-outline { border-color: var(--navy); color: var(--navy); background: var(--white); }
+.btn-outline:hover { background: var(--navy); color: var(--white); }
+.chat-see-page { align-self: flex-start; }
+
 /* Product detail */
 .back-link { display: inline-block; margin-bottom: 1.5rem; font-weight: 600; text-decoration: none; }
 .detail { display: grid; grid-template-columns: 1.1fr 1fr; gap: 3rem; align-items: start; }

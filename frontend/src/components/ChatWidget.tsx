@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useChatResults } from "../chatResults";
 import {
   ApiError,
   CHAT_MAX_MESSAGE,
@@ -14,6 +15,8 @@ interface Message {
   role: "user" | "assistant";
   text: string;
   products?: ChatProduct[];
+  /** True when this reply put product cards on the Products page. */
+  sentToPage?: boolean;
   /** Local-only messages (greeting, errors) are not sent back as history. */
   local?: boolean;
 }
@@ -30,6 +33,10 @@ export default function ChatWidget() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const { apply: applyPageResults } = useChatResults();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const onProductsPage = pathname === "/products";
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -44,8 +51,11 @@ export default function ChatWidget() {
     setMessages((m) => [...m, { role: "user", text }]);
     setSending(true);
     try {
-      const { reply, products } = await sendChatMessage(text, history);
-      setMessages((m) => [...m, { role: "assistant", text: reply, products }]);
+      const { reply, products, page_results } = await sendChatMessage(text, history);
+      // null = leave the page alone (off-topic, single-product questions); otherwise replace or clear.
+      if (page_results) applyPageResults(page_results);
+      const sentToPage = !!page_results && page_results.products.length > 0;
+      setMessages((m) => [...m, { role: "assistant", text: reply, products, sentToPage }]);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : "Sorry, I couldn't reach the shop. Try again.";
       setMessages((m) => [...m, { role: "assistant", text: msg, local: true }]);
@@ -53,6 +63,9 @@ export default function ChatWidget() {
       setSending(false);
     }
   }
+
+  // Only the newest page-updating reply gets the button; older results were replaced.
+  const lastPageReply = messages.reduce((last, m, i) => (m.sentToPage ? i : last), -1);
 
   return (
     <>
@@ -80,6 +93,11 @@ export default function ChatWidget() {
                       </Link>
                     ))}
                   </div>
+                )}
+                {m.sentToPage && i === lastPageReply && !onProductsPage && (
+                  <button className="btn btn-primary btn-sm chat-see-page" onClick={() => navigate("/products")}>
+                    See them on the page →
+                  </button>
                 )}
               </div>
             ))}
