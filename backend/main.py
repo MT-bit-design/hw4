@@ -65,7 +65,7 @@ if not log.handlers:  # our own INFO lines (e.g. price check) next to uvicorn's;
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 if len(SESSION_SECRET) < 32 or SESSION_SECRET.startswith("change-me"):
     raise RuntimeError(
-        "SESSION_SECRET is missing or too short. Copy backend/.env.example to backend/.env "
+        "SESSION_SECRET is missing or too short. Copy .env.example (repo root) to backend/.env "
         "and set it to a long random value."
     )
 

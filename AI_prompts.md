@@ -389,3 +389,37 @@ Log this prompt in `AI_prompts.md` as "Problem 12 - Audit trail, safety, finish 
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 13 - Push to GitHub
+
+**Prompt:**
+
+```text
+Problem 13: Get the repo ready for GitHub. Don't push yet.
+
+1. Make the repo match the assignment layout: `AI_prompts.md`, `requirements.txt`, `.env.example`, `.gitignore`, `README.md` at the top, plus `frontend/`, `backend/` (main.py, agent.py, models.py, tools.py, prompts/prompt.md) and `output/` (harness.md, design.md, usability.md, app_check.html, app_check_images/, audit_trail.json).
+2. Move the backend packages into a root `requirements.txt`, and add a root `.env.example` with placeholders only (`PORTKEY_API_KEY`, `SESSION_SECRET`, the model name). Remove the duplicates in `backend/`. The real `.env` stays where the backend reads it and stays out of git. Make sure both servers still start.
+3. Write a short `README.md`: put the data pack in `data/`, copy `.env.example` to where the backend reads `.env` and fill it in, install and run the backend (`uvicorn main:app --reload --port 8000` from `backend/`), install and run the frontend, then open the site. No real keys or user data.
+4. Check that `.gitignore` covers `.env`, `*.db`, `data/`, `node_modules/`, `.venv/`, `__pycache__/`, `dist/` and `.claude/`, and that `audit_trail.json` and `app_check_images/` are tracked.
+5. Scan all files and the whole git history. Report counts only and never print a value:
+   * my Portkey key, the session secret, and any stored password hash or user email
+   * any `.env`, `.db`, `data/` or `.claude/` file ever committed
+   * any author or committer email other than my noreply one
+ If anything shows up, stop and tell me.
+6. Log this prompt in `AI_prompts.md` as "Problem 13 - Push to GitHub." Commit it as "Problem 13 - Push to GitHub."
+7. Show `git ls-files`, `git status`, and `git log --format="%h | %an %ae | %s"`.
+```
+
+**Follow-up prompt:**
+
+```text
+Go with option 1. Don't redact anything, rewrite history, or delete the unreachable commits.
+
+1. Delete `secret_scan.py` and any output file it made. Confirm it isn't in `git ls-files`.
+2. Log this prompt in `AI_prompts.md` as "Problem 13 - Push to GitHub." and commit it as "Problem 13 - Push to GitHub."
+3. Show me `git ls-files`, `git status`, and `git log --format="%h | %an %ae | %s"`.
+```
+
+What was missing: the first scan found two test-account emails (the assignment's seed test login and the fake example.com account) inside the logged Problem 4 prompt, so the commit paused until I chose to keep them as they are.

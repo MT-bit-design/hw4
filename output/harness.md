@@ -62,8 +62,8 @@ You need Python 3.10 or newer (FastAPI and PydanticAI require it; built and test
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt      (macOS/Linux: .venv/bin/pip)
-copy .env.example .env                              then fill in SESSION_SECRET and PORTKEY_API_KEY
+.venv\Scripts\pip install -r ..\requirements.txt   (macOS/Linux: .venv/bin/pip install -r ../requirements.txt)
+copy ..\.env.example .env                           then fill in SESSION_SECRET and PORTKEY_API_KEY
 .venv\Scripts\python -m uvicorn main:app --reload --port 8000
 ```
 
@@ -74,7 +74,7 @@ npm install
 npm run dev
 ```
 
-**Settings (`backend/.env`, never committed):**
+**Settings (`backend/.env`, copied from the root `.env.example`, never committed):**
 
 | Variable | Required | Purpose |
 |---|---|---|
@@ -112,7 +112,7 @@ npm run dev
 | Login session | signed `HttpOnly`, `SameSite=Lax` cookie, 7 days | `main.py` `SessionMiddleware` |
 | Allowed browser origins | `http://localhost:5173`, `http://127.0.0.1:5173` | `auth.py` `ALLOWED_ORIGINS` |
 
-Libraries: FastAPI, Uvicorn, PydanticAI (`pydantic-ai-slim[openai]`), `portkey-ai`, `itsdangerous`, `python-dotenv` (`backend/requirements.txt`), plus React, React Router, Vite, and TypeScript (`frontend/package.json`).
+Libraries: FastAPI, Uvicorn, PydanticAI (`pydantic-ai-slim[openai]`), `portkey-ai`, `itsdangerous`, `python-dotenv` (root `requirements.txt`), plus React, React Router, Vite, and TypeScript (`frontend/package.json`).
 
 ## 4. Tools and abilities
 
@@ -393,7 +393,7 @@ A new account adds one row to `users`:
 - The cookie is **`HttpOnly`** (JavaScript can't read it) and **`SameSite=Lax`**, and it lasts 7 days. Set `COOKIE_SECURE=true` in production so it's only sent over HTTPS.
 - No token is ever put in `localStorage`. Staying logged in after a refresh works because the browser re-sends the cookie and the app calls `/api/auth/me`.
 - A tampered cookie fails the signature check and is treated as logged out.
-- The signing secret is `SESSION_SECRET` in `backend/.env` (random, never committed). `backend/.env.example` has a placeholder only. The server refuses to start if the secret is missing, too short, or still the placeholder.
+- The signing secret is `SESSION_SECRET` in `backend/.env` (random, never committed). The root `.env.example` has placeholders only. The server refuses to start if the secret is missing, too short, or still the placeholder.
 
 ### Attack protections
 
