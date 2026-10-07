@@ -8,6 +8,8 @@ export default function Products() {
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
+  const [sort, setSort] = useState<"featured" | "price-asc" | "price-desc">("featured");
+  const [inStockOnly, setInStockOnly] = useState(false);
 
   useEffect(() => {
     fetchProducts()
@@ -22,12 +24,17 @@ export default function Products() {
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (products ?? []).filter((p) => {
+    const filtered = (products ?? []).filter((p) => {
       if (type !== "all" && p.garment_type !== type) return false;
+      if (inStockOnly && !p.in_stock) return false;
       if (!q) return true;
       return [p.name, p.description, ...p.colors, ...p.tags].join(" ").toLowerCase().includes(q);
     });
-  }, [products, query, type]);
+    if (sort === "featured") return filtered;
+    const dir = sort === "price-asc" ? 1 : -1;
+    // Stable sort: equal prices keep their original (name) order.
+    return [...filtered].sort((a, b) => dir * (a.price - b.price));
+  }, [products, query, type, sort, inStockOnly]);
 
   return (
     <div className="container section">
@@ -54,6 +61,15 @@ export default function Products() {
             </option>
           ))}
         </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} aria-label="Sort by price">
+          <option value="featured">Sort: featured</option>
+          <option value="price-asc">Price: low to high</option>
+          <option value="price-desc">Price: high to low</option>
+        </select>
+        <label className="filter-check">
+          <input type="checkbox" checked={inStockOnly} onChange={(e) => setInStockOnly(e.target.checked)} />
+          In stock only
+        </label>
       </div>
 
       {error && <p className="notice">We couldn't load products. Is the backend running on port 8000?</p>}

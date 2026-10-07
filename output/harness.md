@@ -232,14 +232,22 @@ Errors: a missing key gives `503`; model or network problems give `502` with a f
 
 ### Tools
 
-The three product tools live in `backend/tools.py` and use `connect_readonly()`. That connection is opened in SQLite's read-only mode, and an SQLite authorizer lets it read only `catalogue` and `inventory`. Reading `users` or `chat_messages`, and any write, fails before the query runs. Every value is passed as a `?` parameter. A fourth tool, `get_my_account` (Problem 8), reads no database at all; it returns the logged-in shopper's own name and email from the deps.
+The four product tools live in `backend/tools.py` and use `connect_readonly()`. That connection is opened in SQLite's read-only mode, and an SQLite authorizer lets it read only `catalogue` and `inventory`. Reading `users` or `chat_messages`, and any write, fails before the query runs. Every value is passed as a `?` parameter. A fourth tool, `get_my_account` (Problem 8), reads no database at all; it returns the logged-in shopper's own name and email from the deps.
 
 | Tool | Input | Returns | Reads |
 |---|---|---|---|
 | `search_products` | `query`, optional `max_price`, optional `limit` (1–8) | `{ match, total_found, products[] }`. Each product has `id`, `name`, `price`, `matches_all_words`. | `catalogue` |
+| `search_by_size` | `size`, optional `query`, `max_price`, `limit` (1–8) | `{ size, match, total_found, products[] }`. Each product has `id`, `name`, `price`, `quantity_in_size`, `matches_all_words`; every product has that size in stock. | `catalogue`, `inventory` |
 | `get_product_details` | `product_id` | `ProductDetails`, or a `ToolError` | `catalogue` |
 | `get_stock` | `product_id`, optional `size` | `StockInfo`, or a `ToolError` | `catalogue`, `inventory` |
 | `get_my_account` | none | `{ logged_in, first_name, email }` for the session's own user | nothing (deps only) |
+
+**`search_by_size`** (Problem 9)
+- **Shared search code:** it uses the same ranked search as `search_products` (all words first, then some words, then budget-only). It adds one parameterized condition: `EXISTS (SELECT 1 FROM inventory i WHERE i.product_id = catalogue.product_id AND i.size = ? AND i.quantity > 0)`.
+- **Sizes:** normalized like `get_stock` ("medium" → `M`, "2xl" → `XXL`); anything else returns `invalid_size`.
+- **No item words:** it returns everything in that size (`match: "size_only"`).
+- **`quantity_in_size`:** read from `inventory` for the listed products.
+- **Page results:** like `search_products`, it records its cards (up to 12) in `ChatDeps.searches`, so its results can go to the "Picked for you" section, labelled e.g. "hoodie in M".
 
 **`search_products`**
 - **How it searches:** it splits the query into keywords, dropping filler words and anything shorter than 2 characters. Single characters like "1" or "s" appear in almost every product, so they would produce false "matches". It then scores each product by how many keywords appear in its name, type, description, colors, or tags.
@@ -439,3 +447,23 @@ History uses the **existing `chat_messages` table**; it already fit, so nothing 
 | Browser: Clear chat → refresh | Panel and server both empty (0 saved). |
 | Browser: log out | Panel reset to the guest greeting and "Guest chat: nothing is saved" note. |
 | Seed users' existing rows | Unchanged throughout (counts only checked; no message was printed). |
+
+---
+
+## Price check on replies
+
+`backend/price_check.py`, called from `enforce_price_check()` in `backend/main.py` after every agent run, before the reply is saved or sent.
+
+1. **Find amounts:** every dollar amount in the reply (`$68`, `$68.00`, `$ 1,250.50`) is converted to cents.
+2. **Allowed amounts:**
+   - the price of every product any tool returned in this run (`ChatDeps.seen_products`, built from database rows);
+   - the price of the product page the shopper is on (from the catalogue);
+   - amounts the shopper typed in this message, so echoing "under $40" is fine.
+3. **Anything else** is unverified: a guessed price, a computed total or change, an invented discount, shipping, or tax.
+4. **One rewrite:** the agent gets one correction turn (same deps, so its tool results still count): "Your reply mentioned $X, which doesn't match any price returned by a tool… use only exact unit prices." If the rewrite passes, it's used.
+5. **Fallback:** if the rewrite still has an unverified amount, or fails, the shopper gets a safe fallback: "I want to be sure I quote you the right price… the product page always shows the current price." The product cards are kept, because their prices come from the database.
+6. **Logging:** the server log records only the count and the outcome (`price check: 1 unverified amount(s)…`, `rewrite passed` / `sending fallback`), never message text.
+
+**Why the prompt alone isn't enough:** the prompt already says "never invent prices", but this is a hard guarantee in code. Live test: "I have exactly $100, how much change would I get?" made the agent's first draft include a computed amount. The check caught it, the rewrite passed, and the shopper saw only "$32.00 each".
+
+**Trade-off:** honest arithmetic (3 × $32 = $96) is also blocked. The prompt now says to quote unit prices only, so this rarely triggers.

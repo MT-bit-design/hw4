@@ -101,6 +101,11 @@ h3 { font-size: 1.1rem; }
 }
 .filters input { flex: 1 1 280px; }
 .filters select { text-transform: capitalize; }
+.filter-check {
+  display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.6rem 1rem; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--white); font-weight: 600; color: var(--navy); cursor: pointer; user-select: none;
+}
+.filter-check input { width: 1rem; height: 1rem; accent-color: var(--navy); }
 .result-count { color: var(--muted); font-size: 0.9rem; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1.4rem; }
@@ -244,6 +249,12 @@ h3 { font-size: 1.1rem; }
 .chat-product-text { display: flex; flex-direction: column; min-width: 0; }
 .chat-product-name { font-size: 0.84rem; font-weight: 600; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-product-price { font-size: 0.8rem; color: var(--muted); font-weight: 700; }
+.chat-quick { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; margin-top: 0.2rem; }
+.chat-quick-btn {
+  background: var(--white); color: var(--navy); border: 1.5px solid var(--navy); border-radius: 999px;
+  padding: 0.4rem 0.85rem; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.chat-quick-btn:hover { background: var(--navy); color: var(--white); }
 .chat-form { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--line); }
 .chat-form input { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; font: inherit; }
 

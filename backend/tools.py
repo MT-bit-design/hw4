@@ -1,6 +1,7 @@
 """Agent tools. Read-only; they only query the `catalogue` and `inventory` tables.
 
 - search_products:     find products by words and/or budget
+- search_by_size:      like search_products, but only products with a given size in stock
 - get_product_details: name, description, price, colors for one product id
 - get_stock:           quantity for one size, or all six sizes, for one product id
 - get_my_account:      the logged-in shopper's own first name and email (from deps, no database)
@@ -120,8 +121,11 @@ def _keywords(query: str) -> list[str]:
     return out[:8]
 
 
-def _filters(words: list[str], max_price: float | None, require_all: bool) -> tuple[str, str, list, list]:
-    """Build (score_sql, where_sql, score_params, where_params). Every value is a ? parameter."""
+def _filters(
+    words: list[str], max_price: float | None, require_all: bool, size: str | None = None
+) -> tuple[str, str, list, list]:
+    """Build (score_sql, where_sql, score_params, where_params). Every value is a ? parameter.
+    With `size`, only products that have that size in stock (quantity > 0) pass."""
     score_sql = " + ".join([f"({HAYSTACK} LIKE ?)"] * len(words)) or "0"
     score_params = [f"%{w}%" for w in words]
     where, where_params = ["1 = 1"], []
@@ -131,13 +135,21 @@ def _filters(words: list[str], max_price: float | None, require_all: bool) -> tu
     if max_price is not None:
         where.append("price <= ?")
         where_params.append(float(max_price))
+    if size is not None:
+        where.append(
+            "EXISTS (SELECT 1 FROM inventory i WHERE i.product_id = catalogue.product_id "
+            "AND i.size = ? AND i.quantity > 0)"
+        )
+        where_params.append(size)
     return score_sql, " AND ".join(where), score_params, where_params
 
 
-def _search(words: list[str], max_price: float | None, require_all: bool) -> tuple[list[sqlite3.Row], int]:
+def _search(
+    words: list[str], max_price: float | None, require_all: bool, size: str | None = None
+) -> tuple[list[sqlite3.Row], int]:
     """Return (up to MAX_PAGE_CARDS rows ranked by keyword hits, total matching count).
-    With no keywords, rows within the price filter come back cheapest first."""
-    score_sql, where_sql, score_params, where_params = _filters(words, max_price, require_all)
+    With no keywords, rows within the filters come back cheapest first."""
+    score_sql, where_sql, score_params, where_params = _filters(words, max_price, require_all, size)
     order = "score DESC, name" if words else "price, name"
     with connect_readonly() as conn:
         rows = conn.execute(
@@ -147,6 +159,24 @@ def _search(words: list[str], max_price: float | None, require_all: bool) -> tup
         ).fetchall()
         total = conn.execute(f"SELECT count(*) FROM catalogue WHERE {where_sql}", where_params).fetchone()[0]
     return rows, total
+
+
+def _ranked_search(
+    words: list[str], max_price: float | None, size: str | None = None
+) -> tuple[list[sqlite3.Row], int, str]:
+    """All-words matches first, then partial matches, then (with a budget) budget-only. -> (rows, total, match)"""
+    rows, total, match = [], 0, "none"
+    if words:
+        rows, total = _search(words, max_price, True, size)
+        match = "all_words" if rows else "none"
+        if not rows:
+            rows, total = _search(words, max_price, False, size)
+            match = "some_words" if rows else "none"
+    if not rows and (max_price is not None or (size is not None and not words)):
+        # No usable words (or words like "gift" that appear in no product text): use the other filters alone.
+        rows, total = _search([], max_price, False, size)
+        match = "price_only" if rows and max_price is not None else ("size_only" if rows else "none")
+    return rows, total, match
 
 
 def search_products(
@@ -176,18 +206,7 @@ def search_products(
     words = _keywords(query)
 
     try:
-        rows, total, match = [], 0, "none"
-        if words:
-            # Prefer products that contain every word; fall back to partial matches.
-            rows, total = _search(words, max_price, require_all=True)
-            match = "all_words" if rows else "none"
-            if not rows:
-                rows, total = _search(words, max_price, require_all=False)
-                match = "some_words" if rows else "none"
-        if not rows and max_price is not None:
-            # No usable words (or words like "gift" that appear in no product text): use the budget alone.
-            rows, total = _search([], max_price, require_all=False)
-            match = "price_only" if rows else "none"
+        rows, total, match = _ranked_search(words, max_price)
     except sqlite3.Error:
         log.warning("search_products failed", exc_info=True)
         return LOOKUP_FAILED.model_dump()
@@ -203,6 +222,73 @@ def search_products(
                 "id": c.id,
                 "name": c.name,
                 "price": f"${c.price:.2f}",
+                "matches_all_words": bool(words) and r["score"] == len(words),
+            }
+            for c, r in zip(cards[:limit], rows)
+        ],
+    }
+
+
+def search_by_size(
+    ctx: RunContext[ChatDeps],
+    size: str,
+    query: str = "",
+    max_price: float | None = None,
+    limit: int = 5,
+) -> dict:
+    """Find products that have a given size IN STOCK right now (checked in the inventory table).
+
+    Use this whenever the shopper names a size while browsing, e.g. "hoodies in medium under $60",
+    "anything in XXL?", "crewnecks in small".
+
+    Args:
+        size: The size as the shopper wrote it ("medium", "m", "xl", "2XL", "small", ...).
+        query: Optional item words, e.g. "hoodie", "gray crewneck". Empty = any item.
+        max_price: Optional highest price in dollars.
+        limit: How many products to list back to you (1-8). Up to 12 can be shown on the page.
+
+    Returns `size` (normalized, e.g. "M"), `match`, `total_found`, and `products`. Each product has `id`,
+    `name`, `price` (formatted), `quantity_in_size` (exact units of that size in stock), and
+    `matches_all_words`. Every product listed has at least 1 in that size.
+    `match` is "all_words", "some_words", "price_only", "size_only" (no item words given), or "none".
+    """
+    wanted = normalize_size(size)
+    if wanted is None:
+        return ToolError(
+            error="invalid_size",
+            message=f"'{size[:20]}' isn't a size we carry. Sizes are XS, S, M, L, XL, and XXL.",
+        ).model_dump()
+    limit = max(1, min(int(limit), MAX_RESULTS))
+    words = _keywords(query)
+
+    try:
+        rows, total, match = _ranked_search(words, max_price, size=wanted)
+        ids = [r["product_id"] for r in rows]
+        qty: dict[str, int] = {}
+        if ids:
+            with connect_readonly() as conn:
+                qty = dict(conn.execute(
+                    f"SELECT product_id, quantity FROM inventory WHERE size = ? "
+                    f"AND product_id IN ({', '.join('?' * len(ids))})",
+                    [wanted, *ids],
+                ).fetchall())
+    except sqlite3.Error:
+        log.warning("search_by_size failed", exc_info=True)
+        return LOOKUP_FAILED.model_dump()
+
+    cards = [_remember(ctx, r) for r in rows]
+    label = f"{query.strip()[:45]} in {wanted}".strip() if query.strip() else f"size {wanted}"
+    ctx.deps.searches.append(SearchRecord(query=label, total=total, cards=cards))
+    return {
+        "size": wanted,
+        "match": match,
+        "total_found": total,
+        "products": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "price": f"${c.price:.2f}",
+                "quantity_in_size": qty.get(c.id, 0),
                 "matches_all_words": bool(words) and r["score"] == len(words),
             }
             for c, r in zip(cards[:limit], rows)

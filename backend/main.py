@@ -30,7 +30,8 @@ from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded  # noqa: E
 from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
 
 import history  # noqa: E402
-from agent import ChatNotConfigured, run_chat  # noqa: E402
+import price_check  # noqa: E402
+from agent import ChatNotConfigured, rerun_with_correction, run_chat  # noqa: E402
 from auth import ALLOWED_ORIGINS, client_ip, require_json_from_allowed_origin, session_user  # noqa: E402
 from auth import router as auth_router  # noqa: E402
 from db import ROOT, connect_readonly  # noqa: E402
@@ -53,6 +54,12 @@ from models import (  # noqa: E402
 from tools import lookup_product  # noqa: E402
 
 log = logging.getLogger("campus_customs")
+if not log.handlers:  # our own INFO lines (e.g. price check) next to uvicorn's; never message contents or keys
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     [%(name)s] %(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
 
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 if len(SESSION_SECRET) < 32 or SESSION_SECRET.startswith("change-me"):
@@ -173,7 +180,8 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         ]
 
     try:
-        output, deps = await run_chat(message, turns, deps)
+        output, deps, run_messages = await run_chat(message, turns, deps)
+        output = await enforce_price_check(output, deps, message, run_messages)
     except ChatNotConfigured:
         raise HTTPException(status_code=503, detail="The shop assistant isn't set up yet. Please try again later.")
     except UsageLimitExceeded:
@@ -199,6 +207,25 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             break
     response = ChatResponse(reply=output.reply.strip(), products=cards, page_results=page_results_for(output, deps))
     return finish_chat(user, message, response)
+
+
+async def enforce_price_check(output: ShopReply, deps: ChatDeps, message: str, run_messages) -> ShopReply:
+    """Every dollar amount in the reply must come from a tool result (see price_check.py).
+    If one doesn't: ask the agent once to rewrite; if it still doesn't, send the safe fallback."""
+    bad = price_check.unverified_amounts(output.reply, deps, message)
+    if not bad:
+        return output
+    log.info("price check: %d unverified amount(s); asking the agent to rewrite", len(bad))
+    try:
+        fixed = await rerun_with_correction(price_check.correction_prompt(bad), run_messages, deps)
+    except Exception as exc:  # the rewrite is best-effort; the fallback is always safe
+        log.warning("price check rewrite failed: %s", type(exc).__name__)
+        fixed = None
+    if fixed is not None and not price_check.unverified_amounts(fixed.reply, deps, message):
+        log.info("price check: rewrite passed")
+        return fixed
+    log.info("price check: rewrite still unverified; sending fallback")
+    return output.model_copy(update={"reply": price_check.FALLBACK_REPLY})
 
 
 def finish_chat(user: dict | None, message: str, response: ChatResponse) -> ChatResponse:

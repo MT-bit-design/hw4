@@ -25,6 +25,8 @@ interface Message {
   local?: boolean;
 }
 
+const QUICK_REPLIES = ["What hoodies do you have?", "Gifts under $40", "Is my size in stock?"];
+
 function greetingFor(firstName?: string): Message {
   return {
     role: "assistant",
@@ -84,7 +86,11 @@ export default function ChatWidget() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const text = input.trim();
+    await send(input);
+  }
+
+  async function send(raw: string) {
+    const text = raw.trim();
     if (!text || sending) return;
     const history: ChatTurn[] = messages.filter((m) => !m.local).map((m) => ({ role: m.role, content: m.text }));
     setInput("");
@@ -125,6 +131,8 @@ export default function ChatWidget() {
   // Only the newest page-updating reply gets the button; older results were replaced.
   const lastPageReply = messages.reduce((last, m, i) => (m.sentToPage ? i : last), -1);
   const hasConversation = messages.some((m) => !m.local);
+  // Quick replies help a shopper get started; they disappear once the shopper has typed anything.
+  const showQuickReplies = !sending && input === "" && !messages.some((m) => m.role === "user");
 
   return (
     <>
@@ -174,6 +182,15 @@ export default function ChatWidget() {
               </div>
             ))}
             {sending && <div className="chat-bubble assistant typing">Looking that up…</div>}
+            {showQuickReplies && (
+              <div className="chat-quick" aria-label="Suggested questions">
+                {QUICK_REPLIES.map((q) => (
+                  <button key={q} className="chat-quick-btn" onClick={() => send(q)}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
             <div ref={endRef} />
           </div>
           <form className="chat-form" onSubmit={handleSubmit}>

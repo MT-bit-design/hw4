@@ -20,7 +20,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
 from models import ChatDeps, ChatTurn, ShopReply
-from tools import get_my_account, get_product_details, get_stock, search_products
+from tools import get_my_account, get_product_details, get_stock, search_by_size, search_products
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "prompt.md"
 DEFAULT_MODEL = "gpt-5.6-luna"
@@ -90,7 +90,7 @@ def get_agent() -> Agent[ChatDeps, ShopReply]:
         deps_type=ChatDeps,
         output_type=ShopReply,
         instructions=[load_prompt(), context_instructions],
-        tools=[search_products, get_product_details, get_stock, get_my_account],
+        tools=[search_products, search_by_size, get_product_details, get_stock, get_my_account],
         model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
         retries=1,
     )
@@ -107,11 +107,22 @@ def to_message_history(history: list[ChatTurn]) -> list[ModelMessage]:
     return messages
 
 
-async def run_chat(message: str, history: list[ChatTurn], deps: ChatDeps) -> tuple[ShopReply, ChatDeps]:
+async def run_chat(
+    message: str, history: list[ChatTurn], deps: ChatDeps
+) -> tuple[ShopReply, ChatDeps, list[ModelMessage]]:
+    """Run the agent. Also returns the full message list, so a price-check correction can continue it."""
     result = await get_agent().run(
         message,
         message_history=to_message_history(history),
         deps=deps,
         usage_limits=USAGE_LIMITS,
     )
-    return result.output, deps
+    return result.output, deps, result.all_messages()
+
+
+async def rerun_with_correction(
+    correction: str, messages: list[ModelMessage], deps: ChatDeps
+) -> ShopReply:
+    """One follow-up turn asking the agent to fix its reply (same deps, so tool results still count)."""
+    result = await get_agent().run(correction, message_history=messages, deps=deps, usage_limits=USAGE_LIMITS)
+    return result.output

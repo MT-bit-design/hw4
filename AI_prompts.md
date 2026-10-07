@@ -286,3 +286,27 @@ Docs and git
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 9 - Usability improvements
+
+**Prompt:**
+
+```text
+Problem 9: Usability improvements.
+Add these 4 improvements. Keep each one small.
+Front end
+
+1. Products page: add "Sort by price" (low to high, high to low) and an "In stock only" checkbox, next to the search box and garment filter.
+2. Chat panel: add 3 quick-reply buttons ("What hoodies do you have?", "Gifts under $40", "Is my size in stock?") that send the question when clicked. Hide them once the shopper has typed.
+
+Agent and backend
+3. New tool: search by size. A shopper can ask "hoodies in medium under $60" and only see products that have that size in stock, read from the database.
+4. Price check on replies: before a reply goes out, check that every dollar amount in it came from a tool result in that conversation. If one didn't, fix it or send a safe fallback. Never send a made-up price.
+Write `output/usability.md`. For each improvement, say what you added and why it helps a Campus Customs shopper or the business. Keep it short.
+All four must show up in the running app. Test them in the real browser, and check the size search results against the database.
+Update `output/harness.md` and `prompt.md` for the new tool. Log this prompt in `AI_prompts.md` as "Problem 9 - Usability improvements." Commit it as "Problem 9 - Usability improvements." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.
