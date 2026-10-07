@@ -155,3 +155,37 @@ yes, make both fixes
 ```
 
 What was missing: asked for "a Yale gift under $40", the bot found nothing (the search needed a keyword match, and "gift" is in no product text) and suggested items the shop doesn't sell (mugs, hats, keychains), so the tool now falls back to the price filter alone and the prompt says the shop sells clothing only.
+
+---
+
+## Problem 6 - Tools: product info and stock
+
+**Prompt:**
+
+```text
+Problem 6: Tools for product info and stock.
+Give the agent tools that look up real answers from `campus_customs.db`. The agent must never make up a price or a quantity.
+
+* Product details tool: takes a product id and returns the name, description, and price.
+* Stock tool: takes a product id and an optional size. With a size, it returns that size's quantity. With no size, it returns all six sizes (XS to XXL).
+* If a size is out of stock, the bot says so clearly, like "Sorry, the XS is sold out." If the shopper wants a size that's sold out, it can mention which sizes are still in stock.
+* If a shopper gives a product name and not an id, use the search tool first. If several products match, ask which one they mean. If nothing matches, say so and don't guess.
+* Accept sizes in a few forms ("small", "xl", "XXL"). Reject anything else politely.
+* The tools only read `catalogue` and `inventory`. They never touch `users` or `chat_messages`. Use parameterized SQL only, and keep the database read-only.
+
+Expand `prompts/prompt.md`: for any price, description, or stock question, the agent must call these tools, and it only quotes numbers from the tool result. If a tool fails or returns nothing, it says it can't check right now and points to the product page.
+Add the return types to `models.py`. Keep the fields few and useful.
+In `output/harness.md`, list each tool, and explain which model fields I chose for the lookup results and why.
+Test it in the chat widget and check every number against the database:
+
+1. The price and description of one product.
+2. "Do you have the baseball left chest crewneck in XS?" It should say sold out.
+3. The same product in M, with the exact quantity.
+4. "What sizes do you have?" for that product, with all six.
+5. A vague name that matches several products.
+6. A product that doesn't exist.
+
+Log this prompt in `AI_prompts.md` as "Problem 6 - Tools: product info and stock." Commit it as "Problem 6 - Tools: product info and stock." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.

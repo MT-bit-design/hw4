@@ -1,8 +1,9 @@
 """Database connections.
 
 Two kinds of connection, kept deliberately separate:
-- `connect_readonly()` for the products API. Opened with `mode=ro`, so SQLite
-  itself refuses every write.
+- `connect_readonly()` for the products API and agent tools. Opened with
+  `mode=ro`, so SQLite itself refuses every write, and an authorizer only lets
+  it read the `catalogue` and `inventory` tables.
 - `connect_users()` for auth. Read-write, but an SQLite authorizer only lets
   statements read or insert rows in the `users` table. Any statement that
   touches another table (including `chat_messages`) fails before it runs.
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "campus_customs.db"
 
 USERS_TABLE = "users"
+PRODUCT_TABLES = {"catalogue", "inventory"}
 
 
 def _require_db() -> None:
@@ -24,11 +26,20 @@ def _require_db() -> None:
         raise HTTPException(status_code=500, detail="Database not found. Unzip data.zip first.")
 
 
+def _products_only(action: int, arg1: str | None, _arg2, _db, _trigger) -> int:
+    if action == sqlite3.SQLITE_READ:
+        return sqlite3.SQLITE_OK if arg1 in PRODUCT_TABLES else sqlite3.SQLITE_DENY
+    if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION):
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
 def connect_readonly() -> sqlite3.Connection:
-    """Read-only connection; any write raises an error."""
+    """Read-only connection that can only read `catalogue` and `inventory`."""
     _require_db()
     conn = sqlite3.connect(f"{DB_PATH.as_uri()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    conn.set_authorizer(_products_only)
     return conn
 
 

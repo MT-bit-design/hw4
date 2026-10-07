@@ -37,6 +37,43 @@ class ChatResponse(BaseModel):
     products: list[ProductCard] = []
 
 
+# ---------- tool results (what the model sees) ----------
+
+SIZES = ("XS", "S", "M", "L", "XL", "XXL")
+
+
+class ProductDetails(BaseModel):
+    """get_product_details result."""
+
+    id: str
+    name: str
+    garment_type: str
+    description: str
+    price: str  # pre-formatted, e.g. "$58.00", so the model quotes it exactly
+
+
+class SizeStock(BaseModel):
+    size: str  # one of SIZES
+    quantity: int
+    sold_out: bool
+
+
+class StockInfo(BaseModel):
+    """get_stock result."""
+
+    id: str
+    name: str
+    sizes: list[SizeStock]  # the one requested size, or all six in XS..XXL order
+    in_stock_sizes: list[str]  # every size with quantity > 0, for "what else do you have?"
+
+
+class ToolError(BaseModel):
+    """Returned instead of a result when a lookup can't answer."""
+
+    error: Literal["product_not_found", "invalid_size", "lookup_failed"]
+    message: str
+
+
 # ---------- agent ----------
 
 class ShopReply(BaseModel):

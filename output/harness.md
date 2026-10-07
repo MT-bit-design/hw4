@@ -170,8 +170,9 @@ uvicorn main:app --reload --port 8000
 |---|---|
 | `backend/main.py` | FastAPI app: products, images, auth router, and `POST /api/chat` (limits, error handling, product cards). |
 | `backend/agent.py` | Builds the agent: loads the prompt, picks the model, connects to Portkey, sets usage caps. |
-| `backend/tools.py` | `search_products`, the agent's only tool (read-only, `catalogue` table only). |
-| `backend/models.py` | Request/response shapes, the agent's structured output, and chat limits. |
+| `backend/tools.py` | The agent's three read-only tools: `search_products`, `get_product_details`, `get_stock`. |
+| `backend/models.py` | Request/response shapes, tool result types, the agent's structured output, and chat limits. |
+| `backend/db.py` | The read-only connection (catalogue + inventory only) and the users-only auth connection. |
 | `backend/prompts/prompt.md` | The system prompt (persona, scope, clothing-only catalogue, "never guess" facts rules, safety). |
 
 ### How the front end talks to FastAPI
@@ -180,9 +181,9 @@ uvicorn main:app --reload --port 8000
 Browser (React, :5173)                     FastAPI (:8000)                        Portkey -> OpenAI model
 ----------------------                     ---------------                        -----------------------
 ChatWidget --POST /api/chat-------------->  validate + rate-limit
-  { message, history[] }                    run agent  -------------------------> model may call the tool
-                                            search_products (SQLite, read-only) <- search_products(query, max_price)
-                                            tool result  -----------------------> model writes ShopReply
+  { message, history[] }                    run agent  -------------------------> model may call tools
+                                            tools (SQLite, read-only)  <--------- search_products / get_product_details / get_stock
+                                            tool results  ----------------------> model writes ShopReply
                                             build product cards  <--------------- { reply, product_ids }
            <--{ reply, products[] }--------
 renders bubble + small product links (/products/:id)
@@ -195,9 +196,9 @@ renders bubble + small product links (/products/:id)
    - at most 40 history items, of which only the last 10 are used, each cut to 1,500 characters;
    - history roles limited to `user` and `assistant`, so a fake `system` turn is rejected.
 3. The request is rate-limited to **8 replies per minute per IP** and **40 per minute for the whole server**. Over the limit, it gets `429` with `Retry-After`.
-4. The agent runs. Each run is capped at 4 model requests, 3 tool calls, 12,000 total tokens, and 600 output tokens.
+4. The agent runs. Each run is capped at 5 model requests, 5 tool calls, 16,000 total tokens, and 600 output tokens. That's enough for search → details → stock → answer.
 5. The agent returns structured output: `ShopReply { reply, product_ids }`.
-6. The server turns `product_ids` into cards only for products that `search_products` actually returned during this run (max 4). So a card can never show an invented product or price.
+6. The server turns `product_ids` into cards only for products that a tool actually returned during this run (max 4). So a card can never show an invented product or price.
 7. The response is `{ reply, products: [{ id, name, price, image_url }] }`. The widget shows the reply and a small link card for each product (image, name, price), linking to `/products/:id`.
 
 Errors: a missing key gives `503`; model or network problems give `502` with a friendly message. If the provider's safety filter blocks a message (for example, Azure's jailbreak filter on "ignore your rules..."), the user gets a friendly on-topic refusal instead of an error.
@@ -217,21 +218,61 @@ Errors: a missing key gives `503`; model or network problems give `502` with a f
 
 - The server starts without a key. Chat just returns `503` until one is added.
 
-### Tool: `search_products`
+### Tools
 
-- **Input:** `query` (text), optional `max_price`, optional `limit` (1–8, default 5).
-- **How it searches:** it splits the query into keywords and drops filler words. It then scores each catalogue row by how many keywords appear in its name, type, description, colors, or tags. Every keyword is passed as a `?` parameter.
-- **Price-only fallback:** if no product matches the keywords and the shopper gave a budget (`max_price`), it returns products within the budget instead, cheapest first. Words like "gift" appear in no product text, so without this fallback "a gift under $40" found nothing.
-- **Output:** `{ match, products }`.
-  - `match` is `"keywords"`, `"price_only"` (the fallback was used), or `"none"`.
-  - Each product has `id`, `name`, `price` (formatted, e.g. `"$68.00"`), and `image_url`.
-- **What it can't see:** sizes and stock, so the prompt tells the agent to point shoppers to the product page for stock.
-- **Access:** it uses the read-only connection and only queries `catalogue`.
+All three tools live in `backend/tools.py` and use `connect_readonly()`. That connection is opened in SQLite's read-only mode, and an SQLite authorizer lets it read only `catalogue` and `inventory`. Reading `users` or `chat_messages`, and any write, fails before the query runs. Every value is passed as a `?` parameter.
+
+| Tool | Input | Returns | Reads |
+|---|---|---|---|
+| `search_products` | `query`, optional `max_price`, optional `limit` (1–8) | `{ match, products[] }`. Each product has `id`, `name`, `price`, `image_url`, `matches_all_words`. | `catalogue` |
+| `get_product_details` | `product_id` | `ProductDetails`, or a `ToolError` | `catalogue` |
+| `get_stock` | `product_id`, optional `size` | `StockInfo`, or a `ToolError` | `catalogue`, `inventory` |
+
+**`search_products`**
+- **How it searches:** it splits the query into keywords and drops filler words. It then scores each product by how many keywords appear in its name, type, description, colors, or tags.
+- **`matches_all_words`:** true when every query word was found in that product. This lets the agent tell "the one product you named" (one full match) from "several could fit" (several full matches, or none), and ask which one the shopper means.
+- **Price-only fallback:** if no product matches the words and the shopper gave a budget, it returns products within the budget, cheapest first (`match: "price_only"`).
+
+**`get_stock` sizes**
+- **Accepted:** sizes are normalized from common spellings: `xs`/`x-small`/`extra small`, `s`/`small`, `m`/`med`/`medium`, `l`/`large`, `xl`/`x-large`/`extra large`, `xxl`/`2xl`/`xx-large`.
+- **Rejected:** anything else (e.g. `XXXL`, `38`, `tall`) returns `invalid_size` with the list of real sizes.
+- **No size given:** it returns all six, always in XS → XXL order.
+
+### Lookup result models (`backend/models.py`) and why these fields
+
+| Model | Fields | Why |
+|---|---|---|
+| `ProductDetails` | `id`, `name`, `garment_type`, `description`, `price` | Exactly what a "what is it / how much" answer needs. **`price` is a pre-formatted string** (`"$58.00"`), so the model copies it as-is and can't round or re-format it. `garment_type` helps it describe the item ("a crewneck sweatshirt"). Colors, tags, and image path are left out; they add tokens and invite the model to over-describe. |
+| `SizeStock` | `size`, `quantity`, `sold_out` | `quantity` is the exact number to quote. **`sold_out` is spelled out as a boolean** so the model never has to reason about "is 0 sold out?" and says "Sorry, the XS is sold out" consistently. |
+| `StockInfo` | `id`, `name`, `sizes[]`, `in_stock_sizes[]` | `sizes` holds the one size asked about, or all six. **`in_stock_sizes`** is always included, so when a size is sold out the model can offer alternatives without a second tool call. `name` lets the reply name the product correctly. |
+| `ToolError` | `error`, `message` | One small shape for every failure. `error` is a fixed code (`product_not_found`, `invalid_size`, `lookup_failed`) that the prompt maps to a behavior: search by name, list the real sizes, or "can't check right now, see the product page". `message` is a short hint for the model. |
+
+Left out on purpose: inventory row ids, raw image paths, and anything from `users` or `chat_messages`. Every tool also records the products it returned, so the reply can only show product cards for items it actually looked up.
+
+### How the prompt uses the tools
+
+- **Price or description question:** call `get_product_details`.
+- **Stock question:** call `get_stock`, and quote only the numbers it returned.
+- **Product named instead of id:** call `search_products` first. If several products fit, ask which one. If none fit, say so and don't guess.
+- **Tool error or empty result:** say "can't check that right now" and point to the product page, which shows price and stock for every size.
+
+Tested in the chat widget, with every number checked against the database:
+
+| Shopper asked | Bot answered | Database |
+|---|---|---|
+| Price + description of the Boola Boola T-shirt | $32.00, navy tee with a distressed "BOOLA BOOLA" bubble-letter graphic | $32.00, same description |
+| Baseball left chest crewneck in XS? | "Sorry… sold out in XS. In stock in S, M, L, and XXL." | XS = 0; XL = 0 |
+| Same product in medium | "We have 5 in medium (M)" | M = 5 |
+| "What sizes do you have?" | S 15, M 5, L 25, XXL 25; XS and XL sold out | identical |
+| "How much is the Champion hoodie?" (vague) | Listed Champion Full Zip Hood ($88.00) and Champion Reverse Weave Hoodie 1 ($68.00); asked which one | the only two Champion hoodies; prices match |
+| "Yale Quantum Llama Parka in large?" (doesn't exist) | Couldn't find it, can't check the size; offered to search for a similar jacket | no such product |
+| Boola Boola T-shirt in XXXL (invalid size) | XXXL isn't a size the shop carries; listed XS–XXL | — |
+| "And in small?" | "We have 12 in small (S)" | S = 12 |
 
 ### Data the model never sees
 
 - Nothing from `users` or `chat_messages` is ever sent to the model. The chat endpoint doesn't read the session or any user row.
-- The tool can only read `catalogue`.
+- The tools' database connection can't read those tables at all; SQLite's authorizer blocks it.
 - Chats are not saved to `chat_messages`.
 
 ### Prompt-injection defenses

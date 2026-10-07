@@ -20,14 +20,15 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
 from models import ChatDeps, ChatTurn, ShopReply
-from tools import search_products
+from tools import get_product_details, get_stock, search_products
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "prompt.md"
 DEFAULT_MODEL = "gpt-5.6-luna"
 
 # Hard caps per chat reply, so one message can't run up the bill.
 MAX_OUTPUT_TOKENS = 600
-USAGE_LIMITS = UsageLimits(request_limit=4, tool_calls_limit=3, total_tokens_limit=12_000)
+# search -> details -> stock can take 3 tool calls plus the final answer.
+USAGE_LIMITS = UsageLimits(request_limit=5, tool_calls_limit=5, total_tokens_limit=16_000)
 
 
 class ChatNotConfigured(RuntimeError):
@@ -67,7 +68,7 @@ def get_agent() -> Agent[ChatDeps, ShopReply]:
         deps_type=ChatDeps,
         output_type=ShopReply,
         instructions=load_prompt(),
-        tools=[search_products],
+        tools=[search_products, get_product_details, get_stock],
         model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
         retries=1,
     )
