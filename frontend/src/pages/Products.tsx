@@ -1,0 +1,76 @@
+import { useEffect, useMemo, useState } from "react";
+import { fetchProducts, type Product } from "../api";
+import ProductCard from "../components/ProductCard";
+
+export default function Products() {
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [error, setError] = useState(false);
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState("all");
+
+  useEffect(() => {
+    fetchProducts()
+      .then(setProducts)
+      .catch(() => setError(true));
+  }, []);
+
+  const types = useMemo(
+    () => [...new Set((products ?? []).map((p) => p.garment_type))].sort(),
+    [products],
+  );
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (products ?? []).filter((p) => {
+      if (type !== "all" && p.garment_type !== type) return false;
+      if (!q) return true;
+      return [p.name, p.description, ...p.colors, ...p.tags].join(" ").toLowerCase().includes(q);
+    });
+  }, [products, query, type]);
+
+  return (
+    <div className="container section">
+      <div className="page-head">
+        <h1>The collection</h1>
+        <p>Every hoodie, crewneck, and tee we've got. Find yours.</p>
+      </div>
+
+      <div className="filters">
+        <input
+          type="search"
+          placeholder="Search hoodies, colors, colleges…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search products"
+        />
+        <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Filter by type">
+          <option value="all">All types</option>
+          {types.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {error && <p className="notice">We couldn't load products. Is the backend running on port 8000?</p>}
+      {!error && products === null && <p className="notice">Loading the goods…</p>}
+      {products && (
+        <>
+          <p className="result-count">
+            {visible.length} {visible.length === 1 ? "item" : "items"}
+          </p>
+          {visible.length === 0 ? (
+            <p className="notice">Nothing matches that yet. Try another search.</p>
+          ) : (
+            <div className="grid">
+              {visible.map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
