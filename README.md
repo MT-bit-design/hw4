@@ -12,7 +12,14 @@ React + Vite + TypeScript front end, FastAPI + PydanticAI back end, SQLite data.
 
 ## 1. Add the data pack
 
-Unzip `data.zip` into the project folder, so you have:
+Unzip `data.zip` into the project folder:
+
+```
+Expand-Archive data.zip -DestinationPath .      (Windows PowerShell)
+unzip data.zip                                  (macOS)
+```
+
+You should now have:
 
 ```
 data/campus_customs.db
@@ -38,6 +45,8 @@ In `backend/.env`, set:
 
 `backend/.env` is in `.gitignore`. Never commit it.
 
+If `PORTKEY_API_KEY` is also set as a system environment variable, it overrides the one in `backend/.env`.
+
 ## 3. Run the backend
 
 From inside `backend/`:
@@ -46,7 +55,7 @@ From inside `backend/`:
 cd backend
 python -m venv .venv
 .venv\Scripts\pip install -r ..\requirements.txt      (macOS/Linux: .venv/bin/pip install -r ../requirements.txt)
-.venv\Scripts\python -m uvicorn main:app --reload --port 8000
+.venv\Scripts\python -m uvicorn main:app --reload --port 8000      (macOS/Linux: .venv/bin/python -m uvicorn main:app --reload --port 8000)
 ```
 
 The API runs at http://localhost:8000.
@@ -64,6 +73,8 @@ npm run dev
 ## 5. Open the site
 
 Go to **http://localhost:5173**. Browse products, create an account, and click the chat button in the bottom right to talk to the assistant.
+
+The backend runs on port 8000 and the front end on port 5173, and the site only works with those ports.
 
 ## Project layout
 

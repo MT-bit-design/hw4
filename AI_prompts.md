@@ -423,3 +423,16 @@ Go with option 1. Don't redact anything, rewrite history, or delete the unreacha
 ```
 
 What was missing: the first scan found two test-account emails (the assignment's seed test login and the fake example.com account) inside the logged Problem 4 prompt, so the commit paused until I chose to keep them as they are.
+
+**Follow-up prompt:**
+
+```text
+Yes, make the README fix.
+
+1. Add the Mac/Linux backend start command, `.venv/bin/python -m uvicorn main:app --reload --port 8000`, next to the Windows one.
+2. Add an unzip command for each system: `Expand-Archive data.zip -DestinationPath .` on Windows and `unzip data.zip` on a Mac.
+3. Add one sentence: the backend runs on port 8000 and the front end on port 5173, and the site only works with those ports.
+4. Add one sentence: if `PORTKEY_API_KEY` is also set as a system environment variable, it overrides the one in `backend/.env`.
+```
+
+What was missing: a test run from a fresh clone of the README showed it had no Mac/Linux backend start command, no unzip command, no note that only ports 8000 and 5173 work, and no warning that a system-wide `PORTKEY_API_KEY` overrides `backend/.env`.
