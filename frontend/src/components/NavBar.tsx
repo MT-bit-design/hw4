@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth";
 
 const links = [
   { to: "/", label: "Home", end: true },
@@ -9,7 +10,15 @@ const links = [
 
 export default function NavBar() {
   const [open, setOpen] = useState(false);
+  const { user, loading, logout } = useAuth();
+  const navigate = useNavigate();
   const close = () => setOpen(false);
+
+  async function handleLogout() {
+    close();
+    await logout();
+    navigate("/");
+  }
 
   return (
     <header className="nav">
@@ -34,12 +43,23 @@ export default function NavBar() {
               {l.label}
             </NavLink>
           ))}
-          <NavLink to="/login" onClick={close}>
-            Log in
-          </NavLink>
-          <NavLink to="/signup" className="btn btn-light btn-sm" onClick={close}>
-            Create account
-          </NavLink>
+          {loading ? null : user ? (
+            <>
+              <span className="nav-greeting">Hi, {user.first_name}</span>
+              <button className="btn btn-light btn-sm" onClick={handleLogout}>
+                Log out
+              </button>
+            </>
+          ) : (
+            <>
+              <NavLink to="/login" onClick={close}>
+                Log in
+              </NavLink>
+              <NavLink to="/signup" className="btn btn-light btn-sm" onClick={close}>
+                Create account
+              </NavLink>
+            </>
+          )}
         </nav>
       </div>
     </header>

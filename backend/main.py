@@ -1,21 +1,36 @@
 """Campus Customs backend.
 
-Read-only API for the storefront: product list, product detail with stock per
-size, and product images. Only the `catalogue` and `inventory` tables are ever
-queried; `users` and `chat_messages` are never touched.
+- Products API: read-only; only the `catalogue` and `inventory` tables are queried.
+- Auth API (auth.py): create account / log in / log out; may only touch `users`.
+- `chat_messages` is never read or written.
 """
 
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "campus_customs.db"
+from .auth import ALLOWED_ORIGINS
+from .auth import router as auth_router
+from .db import ROOT, connect_readonly
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+if len(SESSION_SECRET) < 32 or SESSION_SECRET.startswith("change-me"):
+    raise RuntimeError(
+        "SESSION_SECRET is missing or too short. Copy backend/.env.example to backend/.env "
+        "and set it to a long random value."
+    )
+
 IMAGES_DIR = (ROOT / "data" / "products").resolve()
 
 SIZE_ORDER = ["XS", "S", "M", "L", "XL", "XXL"]
@@ -27,21 +42,33 @@ PRODUCT_COLUMNS = "product_id, name, garment_type, description, colors, search_t
 
 app = FastAPI(title="Campus Customs API")
 
+# Signed session cookie: HttpOnly (Starlette always sets it), SameSite=Lax, 7 days.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="cc_session",
+    max_age=7 * 24 * 60 * 60,
+    same_site="lax",
+    https_only=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+)
+
+# Credentials (the cookie) are only allowed for the Vite dev server.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
-def connect() -> sqlite3.Connection:
-    """Open the database in read-only mode; any write raises an error."""
-    if not DB_PATH.exists():
-        raise HTTPException(status_code=500, detail="Database not found. Unzip data.zip first.")
-    conn = sqlite3.connect(f"{DB_PATH.as_uri()}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:
+    # FastAPI's default 422 echoes the submitted input back, which could include a password.
+    return JSONResponse(status_code=422, content={"detail": "Please fill in every field."})
+
+
+app.include_router(auth_router)
 
 
 def image_url(image_file_path: str) -> str:
@@ -63,7 +90,7 @@ def product_summary(row: sqlite3.Row) -> dict:
 
 @app.get("/api/products")
 def list_products() -> list[dict]:
-    with connect() as conn:
+    with connect_readonly() as conn:
         rows = conn.execute(
             f"""
             SELECT {PRODUCT_COLUMNS},
@@ -78,7 +105,7 @@ def list_products() -> list[dict]:
 
 @app.get("/api/products/{product_id}")
 def get_product(product_id: str) -> dict:
-    with connect() as conn:
+    with connect_readonly() as conn:
         row = conn.execute(
             f"SELECT {PRODUCT_COLUMNS} FROM catalogue WHERE product_id = ?", (product_id,)
         ).fetchone()

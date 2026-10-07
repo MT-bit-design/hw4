@@ -22,11 +22,60 @@ export interface ProductDetail extends Product {
   sizes: SizeStock[];
 }
 
+export interface User {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+}
+
+export interface SignupInput {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  confirm_password: string;
+}
+
+/** Error carrying the server's user-facing message and HTTP status. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(res.status === 404 ? "not-found" : `Request failed (${res.status})`);
   return res.json() as Promise<T>;
 }
+
+/** Auth calls send/receive the HttpOnly session cookie; JS never sees the token. */
+async function authRequest<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}/api/auth${path}`, {
+    method,
+    credentials: "include",
+    headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.detail ?? "Something went wrong. Please try again.", res.status);
+  return data as T;
+}
+
+export const getCurrentUser = () =>
+  authRequest<{ user: User }>("GET", "/me").then((d) => d.user);
+
+export const login = (email: string, password: string) =>
+  authRequest<{ user: User }>("POST", "/login", { email, password }).then((d) => d.user);
+
+export const signup = (input: SignupInput) =>
+  authRequest<{ user: User }>("POST", "/signup", input).then((d) => d.user);
+
+export const logout = () => authRequest<{ ok: boolean }>("POST", "/logout");
 
 export const fetchProducts = () => getJson<Product[]>("/api/products");
 

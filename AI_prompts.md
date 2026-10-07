@@ -80,3 +80,48 @@ Git
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 4 - Create account and login
+
+**Prompt:**
+
+```text
+Problem 4: Create account and login.
+Build a normal create-account and login flow. The Login and Create account pages already exist, so connect them to the backend.
+Create account: first name, last name, email, password, and confirm password. Save the new user in the `users` table.
+Log in: email and password.
+Logged in: show the user's first name in the nav bar with a Log out button. Staying logged in should survive a page refresh.
+Passwords (most important part):
+
+* First, check how the existing passwords in the `users` table are hashed. Tell me the method name only, and never print a hash. Use the same method and a proper library, so the seed test user can log in and new users match it.
+* Never store or log a plain password. Never send a password or hash back from any endpoint.
+* Use a different salt for every password, which a good library does by default.
+* Use the same generic error for a wrong email and a wrong password: "Invalid email or password."
+* Limit failed login attempts, so someone can't guess passwords all day.
+
+Security:
+
+* Use a signed session cookie that is `HttpOnly` and `SameSite`. Don't put the token in localStorage.
+* Put the signing secret in a local `.env` file with a random value. Add `.env.example` with a placeholder only. Don't commit `.env`.
+* Use parameterized SQL only, never string-built queries.
+* Check the inputs on the server: email format, a password of at least 8 characters, name lengths, and that the two passwords match.
+* Update CORS so the cookie works for the Vite dev server only.
+* The products API stays read-only. Open a separate connection for writes that can only touch the `users` table. Don't read or write `chat_messages`.
+
+Test it:
+
+1. Log in as the seed test user from the assignment (`test@campuscustoms.yale.edu` / `password`).
+2. Create a brand-new account with a fake email like `newstudent@example.com`, then log out and log in with it.
+3. A wrong password and a duplicate email should both be rejected.
+
+Don't print any email, name, or hash from the real users while testing.
+Docs and git:
+
+* Add a section to `output/harness.md` on how auth works. Cover what's stored for a user, how passwords are protected, how sessions work, and the attack protections above. Don't put any real user data in it.
+* Log this prompt in `AI_prompts.md` as "Problem 4 - Create account and login."
+* Commit it as "Problem 4 - Create account and login." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.
