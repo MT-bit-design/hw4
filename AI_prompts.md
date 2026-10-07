@@ -310,3 +310,28 @@ Update `output/harness.md` and `prompt.md` for the new tool. Log this prompt in 
 ```
 
 **Follow-up prompt:** None needed.
+
+---
+
+## Problem 10 - Style the website
+
+**Prompt:**
+
+```text
+Problem 10: Style the website.
+Make the site feel like a real Campus Customs storefront. Change only how it looks, and don't break anything it does.
+
+* Look: a minimalistic design with a white background and Segoe UI everywhere (fall back to Carlito, then Calibri, then sans-serif). Keep Yale navy as the main color and add a few fall accents (burnt orange, deep red, gold), used sparingly.
+* Fall theme: draw simple SVG leaves that drift slowly in the Home hero, and use small leaf details in the dividers, the empty states, and the chat header. Keep it light so the page stays clean and fast.
+* Hierarchy: a bold Home hero with one clear "Shop fall favorites" button, lots of white space, clear headings, and consistent spacing.
+* Products: cleaner cards with a soft hover lift and a gentle image zoom, a clear price, and "Sold out" or "Low stock" tags. Give the single-item page the same polish.
+* Motion: gentle fade-ins and smooth hovers. Turn off all motion for shoppers who have reduced motion enabled.
+* Chat: rounded message bubbles, a navy header with a small leaf, and a typing indicator while the bot replies.
+* Phones: everything must look good and stay readable on a narrow screen.
+
+Write `output/design.md`. Keep it short and concrete: what you changed, and why it helps customers stay and buy.
+Test every page in the real browser, including the chat, the product cards, and the single-item page, on a wide and a narrow screen.
+Log this prompt in `AI_prompts.md` as "Problem 10 - Style the website." Commit it as "Problem 10 - Style the website." Don't commit `.env`, `data/`, or any `.db` file.
+```
+
+**Follow-up prompt:** None needed.

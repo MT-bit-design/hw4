@@ -71,6 +71,8 @@ if len(SESSION_SECRET) < 32 or SESSION_SECRET.startswith("change-me"):
 IMAGES_DIR = (ROOT / "data" / "products").resolve()
 
 SIZE_ORDER = ["XS", "S", "M", "L", "XL", "XXL"]
+LOW_STOCK_TOTAL = 20  # "Low stock" tag: 1-20 units left across all sizes
+LOW_STOCK_SIZE = 3  # per-size "Only N left" on the single-item page
 IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -321,7 +323,10 @@ def list_products() -> list[dict]:
             ORDER BY name
             """
         ).fetchall()
-    return [{**product_summary(r), "in_stock": r["total_stock"] > 0} for r in rows]
+    return [
+        {**product_summary(r), "in_stock": r["total_stock"] > 0, "low_stock": 0 < r["total_stock"] <= LOW_STOCK_TOTAL}
+        for r in rows
+    ]
 
 
 @app.get("/api/products/{product_id}")
@@ -340,10 +345,17 @@ def get_product(product_id: str) -> dict:
         return SIZE_ORDER.index(size) if size in SIZE_ORDER else len(SIZE_ORDER)
 
     sizes = [
-        {"size": s["size"], "quantity": s["quantity"], "in_stock": s["quantity"] > 0}
+        {"size": s["size"], "quantity": s["quantity"], "in_stock": s["quantity"] > 0,
+         "low_stock": 0 < s["quantity"] <= LOW_STOCK_SIZE}
         for s in sorted(stock, key=lambda s: size_rank(s["size"]))
     ]
-    return {**product_summary(row), "sizes": sizes, "in_stock": any(s["in_stock"] for s in sizes)}
+    total = sum(s["quantity"] for s in sizes)
+    return {
+        **product_summary(row),
+        "sizes": sizes,
+        "in_stock": total > 0,
+        "low_stock": 0 < total <= LOW_STOCK_TOTAL,
+    }
 
 
 @app.get("/api/images/{filename}")

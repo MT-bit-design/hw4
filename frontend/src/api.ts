@@ -10,12 +10,16 @@ export interface Product {
   price: number;
   image_url: string;
   in_stock: boolean;
+  /** 1-20 units left across all sizes. */
+  low_stock: boolean;
 }
 
 export interface SizeStock {
   size: string;
   quantity: number;
   in_stock: boolean;
+  /** 1-3 left in this size. */
+  low_stock: boolean;
 }
 
 export interface ProductDetail extends Product {

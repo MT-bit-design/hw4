@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useChatResults } from "../chatResults";
+import { scrollBehavior } from "../motion";
+import { Leaf } from "./Leaf";
 import ProductCard from "./ProductCard";
 
 /** "Picked for you": products the chat assistant found, shown at the top of the Products page. */
@@ -11,7 +13,7 @@ export default function PickedForYou() {
   // Scroll to the section when new results arrive while the page is open (not on back/refresh).
   useEffect(() => {
     if (version !== seenVersion.current && results) {
-      sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      sectionRef.current?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
     }
     seenVersion.current = version;
   }, [version, results]);
@@ -23,7 +25,9 @@ export default function PickedForYou() {
     <section ref={sectionRef} className="picked" aria-labelledby="picked-title">
       <div className="picked-head">
         <div>
-          <p className="eyebrow">From your chat</p>
+          <p className="eyebrow">
+            <Leaf color="var(--orange)" size={13} /> From your chat
+          </p>
           <h2 id="picked-title">Picked for you</h2>
           <p className="picked-sub">
             Results for “{results.query}”:{" "}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { fetchProduct, formatPrice, imageSrc, type ProductDetail as Detail } from "../api";
+import { EmptyState } from "../components/Leaf";
 
 export default function ProductDetail() {
   const { id = "" } = useParams();
@@ -20,10 +21,11 @@ export default function ProductDetail() {
   if (error) {
     return (
       <div className="container section">
-        <p className="notice">
-          {error === "not-found" ? "We couldn't find that item." : "We couldn't load this item right now."}
-        </p>
-        <Link to="/products">← Back to all products</Link>
+        <EmptyState title={error === "not-found" ? "We couldn't find that item." : "We couldn't load this item right now."}>
+          <Link to="/products" className="btn btn-primary">
+            Back to all products
+          </Link>
+        </EmptyState>
       </div>
     );
   }
@@ -45,7 +47,14 @@ export default function ProductDetail() {
         <div className="detail-info">
           <p className="eyebrow">{product.garment_type}</p>
           <h1>{product.name}</h1>
-          <p className="detail-price">{formatPrice(product.price)}</p>
+          <div className="detail-price-row">
+            <p className="detail-price">{formatPrice(product.price)}</p>
+            {!product.in_stock ? (
+              <span className="tag tag-out">Sold out</span>
+            ) : (
+              product.low_stock && <span className="tag tag-low">Low stock</span>
+            )}
+          </div>
           <p className="detail-desc">{product.description}</p>
 
           {product.colors.length > 0 && (
@@ -59,20 +68,22 @@ export default function ProductDetail() {
             {product.sizes.map((s) => (
               <button
                 key={s.size}
-                className={`size ${s.in_stock ? "" : "sold-out"} ${selected === s.size ? "selected" : ""}`}
+                className={`size ${s.in_stock ? "" : "sold-out"} ${s.low_stock ? "low" : ""} ${selected === s.size ? "selected" : ""}`}
                 disabled={!s.in_stock}
                 onClick={() => setSelected(s.size)}
                 aria-pressed={selected === s.size}
               >
                 <span className="size-label">{s.size}</span>
-                <span className="size-stock">{s.in_stock ? `${s.quantity} in stock` : "Sold out"}</span>
+                <span className="size-stock">
+                  {!s.in_stock ? "Sold out" : s.low_stock ? `Only ${s.quantity} left` : `${s.quantity} in stock`}
+                </span>
               </button>
             ))}
           </div>
 
           {selectedSize && (
-            <p className="stock-note">
-              {selectedSize.quantity <= 3
+            <p className={`stock-note ${selectedSize.low_stock ? "low" : ""}`}>
+              {selectedSize.low_stock
                 ? `Only ${selectedSize.quantity} left in ${selectedSize.size}. Don't wait!`
                 : `${selectedSize.size} is in stock and ready to go.`}
             </p>

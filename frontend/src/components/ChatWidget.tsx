@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { useChatResults } from "../chatResults";
+import { scrollBehavior } from "../motion";
+import { Leaf } from "./Leaf";
 import {
   ApiError,
   CHAT_MAX_MESSAGE,
@@ -81,7 +83,7 @@ export default function ChatWidget() {
   }, [userId, authLoading]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    endRef.current?.scrollIntoView({ behavior: scrollBehavior() });
   }, [messages, open]);
 
   async function handleSubmit(e: FormEvent) {
@@ -139,7 +141,10 @@ export default function ChatWidget() {
       {open && (
         <section className="chat-panel" aria-label="Chat with Campus Customs">
           <header className="chat-header">
-            <span>Campus Customs Assistant</span>
+            <span className="chat-title">
+              <Leaf color="var(--gold)" size={16} />
+              <span className="chat-title-text">Campus Customs Assistant</span>
+            </span>
             <span className="chat-header-actions">
               <button
                 className="chat-clear"
@@ -181,7 +186,13 @@ export default function ChatWidget() {
                 )}
               </div>
             ))}
-            {sending && <div className="chat-bubble assistant typing">Looking that up…</div>}
+            {sending && (
+              <div className="chat-bubble assistant typing" role="status" aria-label="The assistant is typing">
+                <span className="dot" />
+                <span className="dot" />
+                <span className="dot" />
+              </div>
+            )}
             {showQuickReplies && (
               <div className="chat-quick" aria-label="Suggested questions">
                 {QUICK_REPLIES.map((q) => (

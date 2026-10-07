@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
+import { LeafDivider } from "./Leaf";
 
 export default function Footer() {
   return (
     <footer className="footer">
+      <LeafDivider color="var(--gold)" />
       <div className="container footer-inner">
         <div>
           <strong>Campus Customs</strong>

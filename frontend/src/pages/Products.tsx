@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchProducts, type Product } from "../api";
+import { EmptyState } from "../components/Leaf";
 import PickedForYou from "../components/PickedForYou";
 import ProductCard from "../components/ProductCard";
 
@@ -72,7 +73,11 @@ export default function Products() {
         </label>
       </div>
 
-      {error && <p className="notice">We couldn't load products. Is the backend running on port 8000?</p>}
+      {error && (
+        <EmptyState title="We couldn't load products.">
+          <p>Is the backend running on port 8000?</p>
+        </EmptyState>
+      )}
       {!error && products === null && <p className="notice">Loading the goods…</p>}
       {products && (
         <>
@@ -80,7 +85,9 @@ export default function Products() {
             {visible.length} {visible.length === 1 ? "item" : "items"}
           </p>
           {visible.length === 0 ? (
-            <p className="notice">Nothing matches that yet. Try another search.</p>
+            <EmptyState title="Nothing matches that yet.">
+              <p>Try another search, or clear a filter.</p>
+            </EmptyState>
           ) : (
             <div className="grid">
               {visible.map((p) => (
