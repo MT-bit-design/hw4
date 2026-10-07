@@ -63,8 +63,10 @@ def _remember(ctx: RunContext[ChatDeps], row: sqlite3.Row) -> None:
 
 
 def _keywords(query: str) -> list[str]:
+    """Search words: lower-case, no filler words, and at least 2 characters
+    (single characters like "1" or "s" match almost everything)."""
     words = re.findall(r"[a-z0-9]+", query.lower())
-    return [w for w in words if w not in STOPWORDS][:8]
+    return [w for w in words if len(w) >= 2 and w not in STOPWORDS][:8]
 
 
 def _search(words: list[str], max_price: float | None, limit: int) -> list[sqlite3.Row]:
@@ -118,10 +120,12 @@ def search_products(
     words = _keywords(query)
 
     try:
-        rows = _search(words, max_price, limit)
-        match = "keywords" if rows else "none"
-        if not rows and words and max_price is not None:
-            # Words like "gift" appear in no product text; fall back to the budget alone.
+        rows, match = [], "none"
+        if words:
+            rows = _search(words, max_price, limit)
+            match = "keywords" if rows else "none"
+        if not rows and max_price is not None:
+            # No usable words (or words like "gift" that appear in no product text): use the budget alone.
             rows = _search([], max_price, limit)
             match = "price_only" if rows else "none"
     except sqlite3.Error:

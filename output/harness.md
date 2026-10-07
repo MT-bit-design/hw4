@@ -241,7 +241,8 @@ All three tools live in `backend/tools.py` and use `connect_readonly()`. That co
 | `get_stock` | `product_id`, optional `size` | `StockInfo`, or a `ToolError` | `catalogue`, `inventory` |
 
 **`search_products`**
-- **How it searches:** it splits the query into keywords and drops filler words. It then scores each product by how many keywords appear in its name, type, description, colors, or tags.
+- **How it searches:** it splits the query into keywords, dropping filler words and anything shorter than 2 characters. Single characters like "1" or "s" appear in almost every product, so they would produce false "matches". It then scores each product by how many keywords appear in its name, type, description, colors, or tags.
+- **No usable words:** a query like `' OR 1=1 --` or "the" returns nothing (`match: "none"`). If the shopper gave a budget, it returns budget options instead (`match: "price_only"`). It never lists products as if they matched.
 - **`matches_all_words`:** true when every query word was found in that product. This lets the agent tell "the one product you named" (one full match) from "several could fit" (several full matches, or none), and ask which one the shopper means.
 - **Price-only fallback:** if no product matches the words and the shopper gave a budget, it returns products within the budget, cheapest first (`match: "price_only"`).
 

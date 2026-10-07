@@ -194,4 +194,24 @@ Test it in the chat widget and check every number against the database:
 Log this prompt in `AI_prompts.md` as "Problem 6 - Tools: product info and stock." Commit it as "Problem 6 - Tools: product info and stock." Don't commit `.env`, `data/`, or any `.db` file.
 ```
 
-**Follow-up prompt:** None needed.
+**Follow-up prompt:**
+
+```text
+How many XS does ' OR 1=1 -- have?
+```
+
+```text
+yes, make that fix
+```
+
+```text
+Yes, but check first. Show me `git status` and `git diff --stat`, with the three files named. Also show the changed lines in `backend/tools.py`.
+Then commit in two separate commits. Don't rewrite history.
+
+1. The keyword fix goes in a commit named "Problem 6 follow-up - handle odd input." Include the matching follow-up entry in `AI_prompts.md` under Problem 6, with this prompt and one sentence on what was missing: the first version let a single-character keyword like "1" produce confident-looking matches.
+2. If any of the three files belong to the password hashing change, don't put them in commit 1. Run the hashing tests first (seed user logs in, new account works, wrong password rejected, and the new hash carries the 600000 marker, printing only the marker). Then commit them as "Problem 4 follow-up - stronger password hashing." with its own follow-up entry under Problem 4 in `AI_prompts.md`.
+
+Show me `git status` and `git log --format="%h | %an %ae | %s"` at the end.
+```
+
+What was missing: the first version let a single-character keyword like "1" produce confident-looking matches.
